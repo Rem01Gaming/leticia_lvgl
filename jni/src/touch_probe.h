@@ -1,5 +1,4 @@
-#ifndef TOUCH_PROBE_H
-#define TOUCH_PROBE_H
+#pragma once
 
 #include <stddef.h>
 
@@ -13,5 +12,3 @@
  * @return 0 on success, -1 if no touch capable node was found.
  */
 int touch_probe_find(char *out_path, size_t out_size);
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef UPDATER_PROTO_H
-#define UPDATER_PROTO_H
+#pragma once
 
 /**
  * @brief Attach to the command pipe recovery passed as argv[2].
@@ -25,5 +24,3 @@ void updater_proto_set_progress(float fraction, float seconds);
  * @brief Close the pipe if it was attached.
  */
 void updater_proto_close(void);
-
-#endif

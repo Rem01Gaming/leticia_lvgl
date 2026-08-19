@@ -7,6 +7,7 @@
 #include <lvgl.h>
 
 #include "parent_mute.h"
+#include "power_mgr.h"
 #include "touch_probe.h"
 #include "ui_scale.h"
 #include "updater_proto.h"
@@ -23,6 +24,20 @@ static void exit_btn_event_cb(lv_event_t *e)
 {
     (void)e;
     g_should_exit = 1;
+}
+
+/**
+ * @brief Callback for user interactions to reset activity timer and wake display if sleeping
+ */
+static void user_activity_event_cb(lv_event_t *e)
+{
+    (void)e;
+    /* If display is sleeping or dimmed, wake it up */
+    power_state_t state = power_mgmt_get_state();
+    if (state == POWER_STATE_SLEEP || state == POWER_STATE_DIMMED) {
+        power_mgmt_set_state(POWER_STATE_ON);
+    }
+    power_mgmt_reset_activity_timer();
 }
 
 /**
@@ -101,11 +116,14 @@ static void build_ui(lv_display_t *disp)
     lv_obj_set_size(btn, (int)(220 * scale), (int)(90 * scale));
     lv_obj_align(btn, LV_ALIGN_CENTER, 0, (int)(80 * scale));
     lv_obj_add_event_cb(btn, exit_btn_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn, user_activity_event_cb, LV_EVENT_ALL, NULL);
 
     lv_obj_t *btn_label = lv_label_create(btn);
     lv_label_set_text(btn_label, "Exit");
     lv_obj_set_style_text_font(btn_label, ui_scale_pick_font((int)(24 * scale)), 0);
     lv_obj_center(btn_label);
+
+    lv_obj_add_event_cb(scr, user_activity_event_cb, LV_EVENT_ALL, NULL);
 }
 
 int main(int argc, char *argv[])
@@ -138,6 +156,9 @@ int main(int argc, char *argv[])
 
     build_ui(disp);
 
+    /* Initialize power management */
+    power_mgmt_init(disp);
+
     while (!g_should_exit) {
         uint32_t idle_ms = lv_timer_handler();
         if (idle_ms == LV_NO_TIMER_READY)
@@ -145,8 +166,12 @@ int main(int argc, char *argv[])
         usleep(idle_ms * 1000);
     }
 
-    if (indev != NULL)
+    /* Cleanup power management */
+    power_mgmt_deinit();
+
+    if (indev != NULL) {
         lv_evdev_delete(indev);
+    }
 
     lv_display_delete(disp);
 

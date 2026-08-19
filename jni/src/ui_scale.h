@@ -1,5 +1,4 @@
-#ifndef UI_SCALE_H
-#define UI_SCALE_H
+#pragma once
 
 #include <lvgl.h>
 
@@ -28,5 +27,3 @@ float ui_scale_factor(int dpi);
  * @return Pointer to the closest available built in font.
  */
 const lv_font_t *ui_scale_pick_font(int target_px);
-
-#endif
