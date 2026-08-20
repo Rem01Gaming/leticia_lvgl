@@ -1,10 +1,15 @@
-#include "ui_scale.h"
+#include "ui_scale.hpp"
 
-#include <stdlib.h>
+#include <array>
+#include <cstdlib>
 
-#define UI_SCALE_BASELINE_DPI 160
+namespace Leticia::UiScale {
 
-int ui_scale_estimate_dpi(int32_t hor_res, int32_t ver_res)
+namespace {
+constexpr int kBaselineDpi = 160;
+}
+
+int estimate_dpi(int32_t hor_res, int32_t ver_res)
 {
     int32_t shortest_side = hor_res < ver_res ? hor_res : ver_res;
     int dpi = (shortest_side / 160) * 80;
@@ -15,24 +20,26 @@ int ui_scale_estimate_dpi(int32_t hor_res, int32_t ver_res)
     return dpi;
 }
 
-float ui_scale_factor(int dpi)
+float factor(int dpi)
 {
-    float factor = (float)dpi / (float)UI_SCALE_BASELINE_DPI;
+    float scale = static_cast<float>(dpi) / static_cast<float>(kBaselineDpi);
 
-    if (factor < 1.0f)
-        factor = 1.0f;
-    if (factor > 4.0f)
-        factor = 4.0f;
+    if (scale < 1.0f)
+        scale = 1.0f;
+    if (scale > 4.0f)
+        scale = 4.0f;
 
-    return factor;
+    return scale;
 }
 
-const lv_font_t *ui_scale_pick_font(int target_px)
+const lv_font_t *pick_font(int target_px)
 {
-    static const struct {
+    struct font_entry {
         int px;
         const lv_font_t *font;
-    } table[] = {
+    };
+
+    static const std::array<font_entry, 9> table = {{
         {14, &lv_font_montserrat_14},
         {20, &lv_font_montserrat_20},
         {24, &lv_font_montserrat_24},
@@ -42,14 +49,13 @@ const lv_font_t *ui_scale_pick_font(int target_px)
         {40, &lv_font_montserrat_40},
         {44, &lv_font_montserrat_44},
         {48, &lv_font_montserrat_48},
-    };
-    const size_t table_len = sizeof(table) / sizeof(table[0]);
+    }};
 
     const lv_font_t *best = table[0].font;
-    int best_diff = abs(target_px - table[0].px);
+    int best_diff = std::abs(target_px - table[0].px);
 
-    for (size_t i = 1; i < table_len; i++) {
-        int diff = abs(target_px - table[i].px);
+    for (size_t i = 1; i < table.size(); i++) {
+        int diff = std::abs(target_px - table[i].px);
         if (diff < best_diff) {
             best_diff = diff;
             best = table[i].font;
@@ -58,3 +64,5 @@ const lv_font_t *ui_scale_pick_font(int target_px)
 
     return best;
 }
+
+} // namespace Leticia::UiScale
