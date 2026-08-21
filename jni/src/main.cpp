@@ -1,10 +1,12 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <unistd.h>
 
 #include <lvgl.h>
 
+#include "device_config.hpp"
 #include "parent_mute.hpp"
 #include "power_mgr.hpp"
 #include "touch_probe.hpp"
@@ -132,10 +134,18 @@ int main(int argc, char *argv[])
 {
     Leticia::updater_proto proto;
 
+    /* Recovery invokes us as `update-binary <api_version> <pipe_fd> <zip_path>`
+     * (standard edify convention) since this binary IS update-binary, not a
+     * script interpreter -- argv[3] is the path to the OTA zip on disk,
+     * which is also where a per-device config can travel (see
+     * device_config.hpp) so the same prebuilt binary works across devices
+     * without recompilation. */
+    std::string zip_path;
     if (argc >= 4) {
         int pipe_fd = atoi(argv[2]);
         proto.attach(pipe_fd);
         proto.ui_print("Launching Leticia UI");
+        zip_path = argv[3];
     }
 
     signal(SIGINT, request_exit);
@@ -155,10 +165,18 @@ int main(int argc, char *argv[])
 
     lv_indev_t *indev = open_touch_indev(proto);
 
+    Leticia::device_config_t device_config;
+    if (Leticia::load_device_config(zip_path, device_config)) {
+        proto.ui_print("Loaded device config (backlight=%s)", device_config.backlight_path.c_str());
+    } else {
+        proto.ui_print("No device config found, using auto-detection");
+    }
+
     Leticia::power_manager power;
     build_ui(disp, power);
 
-    power.init(disp);
+    power.init(disp, device_config);
+    power.set_touch_indev(indev);
 
     while (!g_should_exit) {
         uint32_t idle_ms = lv_timer_handler();

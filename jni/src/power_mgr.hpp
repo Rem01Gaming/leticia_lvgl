@@ -6,6 +6,7 @@
 
 #include <lvgl.h>
 
+#include "device_config.hpp"
 #include "input_event.hpp"
 
 namespace Leticia {
@@ -21,9 +22,9 @@ enum class power_state {
 };
 
 /**
- * @brief Owns display blanking, backlight fade and the inactivity/power
- *        button handling for the recovery UI. One instance is expected to
- *        live for the lifetime of the display.
+ * @brief Owns display blanking, backlight fade, touch input gating, and
+ *        the inactivity/power button handling for the recovery UI. One
+ *        instance is expected to live for the lifetime of the display.
  */
 class power_manager final {
 public:
@@ -36,8 +37,24 @@ public:
     /**
      * @brief Initialize the power management subsystem.
      * @param disp Pointer to the LVGL display object.
+     * @param config Per-device quirks (backlight node, whether fb-level
+     *        blanking actually works on this panel, etc), loaded at
+     *        runtime by load_device_config() so the same binary works
+     *        across devices without recompiling. Pass a default-constructed
+     *        device_config_t to fall back to auto-detection.
      */
-    void init(lv_display_t *disp);
+    void init(lv_display_t *disp, const device_config_t &config = device_config_t{});
+
+    /**
+     * @brief Register the touchscreen input device so it can be disabled
+     *        while asleep. Safe to call with nullptr (e.g. no touch node
+     *        found) or not at all -- touch gating is simply skipped.
+     *        Only the power button (via input_event_monitor, a separate
+     *        evdev node) can wake the display; touch is intentionally
+     *        inert while asleep so a screen-off phone in a pocket or bag
+     *        cannot register accidental taps.
+     */
+    void set_touch_indev(lv_indev_t *indev);
 
     /**
      * @brief Set the current power state.
@@ -97,6 +114,8 @@ private:
     lv_timer_t *activity_timer_ = nullptr;
 
     input_event_monitor input_monitor_;
+    device_config_t device_config_;
+    lv_indev_t *touch_indev_ = nullptr;
 
     std::string backlight_path_;
     int max_brightness_ = 255;
@@ -117,6 +136,7 @@ private:
     void finish_sleep_after_fade();
     void cancel_dim_hold();
     void on_input_event(const input_event_t &event);
+    void set_touch_enabled(bool enabled);
 
     static void activity_timer_trampoline(lv_timer_t *timer);
     static void fade_timer_trampoline(lv_timer_t *timer);

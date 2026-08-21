@@ -25,6 +25,10 @@ const char *parse_error::description() const noexcept {
         case parse_error_code::too_many_devices: return "too many device sections within one verb";
         case parse_error_code::too_many_directives: return "too many directives within one section";
         case parse_error_code::out_of_memory: return "could not read the config file into memory";
+        case parse_error_code::unknown_format_field: return "unknown field inside a [verb:x/format] section";
+        case parse_error_code::unknown_sample_format: return "unrecognized sample_format value";
+        case parse_error_code::invalid_channels: return "channels must be a positive integer";
+        case parse_error_code::invalid_rate: return "rate must be a positive integer";
     }
     return "unknown error";
 }
@@ -93,11 +97,52 @@ bool parse_long(const char *p, long *out) noexcept {
     return true;
 }
 
+/**
+ * @brief Maps the subset of ModernAlsa::sample_format names a phone playback
+ * path realistically uses. Anything not in this table is rejected rather
+ * than guessed at, since a silently-wrong format is worse than a build
+ * failure caught while authoring the config.
+ */
+bool parse_sample_format(const char *text, ModernAlsa::sample_format *out) noexcept {
+    struct entry {
+        const char *name;
+        ModernAlsa::sample_format value;
+    };
+    static constexpr entry table[] = {
+        {"s8", ModernAlsa::sample_format::s8},
+        {"s16_le", ModernAlsa::sample_format::s16_le},
+        {"s24_3le", ModernAlsa::sample_format::s24_3le},
+        {"s24_le", ModernAlsa::sample_format::s24_le},
+        {"s32_le", ModernAlsa::sample_format::s32_le},
+        {"u8", ModernAlsa::sample_format::u8},
+        {"u16_le", ModernAlsa::sample_format::u16_le},
+    };
+    for (const entry &e : table) {
+        if (strcmp(text, e.name) == 0) {
+            *out = e.value;
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 // ============================================================================
 // verb::find_device / config::find_verb
 // ============================================================================
+
+// ============================================================================
+// pcm_format::resolve
+// ============================================================================
+
+ModernAlsa::pcm_config pcm_format::resolve(const ModernAlsa::pcm_config &baseline) const noexcept {
+    ModernAlsa::pcm_config out = baseline;
+    if (has_channels) out.channels = channels;
+    if (has_rate) out.rate = rate;
+    if (has_format) out.format = format;
+    return out;
+}
 
 const device *verb::find_device(const char *device_name) const noexcept {
     for (size_type i = 0; i < device_count; i++) {
@@ -126,8 +171,9 @@ namespace {
 struct parse_cursor final {
     config *cfg = nullptr;
     verb *current_verb = nullptr;
-    device *current_device = nullptr; // null while inside a bare [verb:X] section
+    device *current_device = nullptr; // null while inside a bare [verb:X] or [verb:X/format] section
     bool in_card_section = false;
+    bool in_format_section = false;   // true only inside [verb:X/format]
 };
 
 /**
@@ -164,6 +210,7 @@ parse_error_code parse_section_header(parse_cursor &cur, char *body) noexcept {
         cur.current_verb = nullptr;
         cur.current_device = nullptr;
         cur.in_card_section = true;
+        cur.in_format_section = false;
         return parse_error_code::none;
     }
 
@@ -197,13 +244,21 @@ parse_error_code parse_section_header(parse_cursor &cur, char *body) noexcept {
     }
     cur.current_verb = v;
     cur.current_device = nullptr;
+    cur.in_format_section = false;
 
     if (slash == nullptr) return parse_error_code::none; // bare [verb:X]
 
+    char *suffix = slash + 1;
+
+    // .../format
+    if (strcmp(suffix, "format") == 0) {
+        cur.in_format_section = true;
+        return parse_error_code::none;
+    }
+
     // .../device:<name>
-    char *device_part = slash + 1;
-    if (strncmp(device_part, "device:", 7) != 0) return parse_error_code::malformed_section;
-    char *device_name_str = device_part + 7;
+    if (strncmp(suffix, "device:", 7) != 0) return parse_error_code::malformed_section;
+    char *device_name_str = suffix + 7;
     if (*device_name_str == '\0') return parse_error_code::malformed_section;
 
     device *d = nullptr;
@@ -290,6 +345,53 @@ parse_error_code parse_card_field(parse_cursor &cur, const char *line) noexcept 
     return parse_error_code::none;
 }
 
+/**
+ * @brief Parses one `key = value` line inside a `[verb:X/format]` section:
+ * `channels`, `rate`, or `sample_format`.
+ */
+parse_error_code parse_format_field(parse_cursor &cur, const char *line) noexcept {
+    if (cur.current_verb == nullptr) return parse_error_code::malformed_section;
+    pcm_format &fmt = cur.current_verb->format;
+
+    const char *eq = strchr(line, '=');
+    if (eq == nullptr) return parse_error_code::missing_value;
+
+    char key[32];
+    copy_bounded(key, sizeof(key), line, static_cast<size_type>(eq - line));
+    rstrip(key);
+
+    const char *p = skip_spaces(eq + 1);
+
+    if (strcmp(key, "channels") == 0) {
+        long v = 0;
+        if (!parse_long(p, &v) || v <= 0) return parse_error_code::invalid_channels;
+        fmt.channels = static_cast<size_type>(v);
+        fmt.has_channels = true;
+        return parse_error_code::none;
+    }
+
+    if (strcmp(key, "rate") == 0) {
+        long v = 0;
+        if (!parse_long(p, &v) || v <= 0) return parse_error_code::invalid_rate;
+        fmt.rate = static_cast<size_type>(v);
+        fmt.has_rate = true;
+        return parse_error_code::none;
+    }
+
+    if (strcmp(key, "sample_format") == 0) {
+        char text[32];
+        copy_bounded(text, sizeof(text), p, strlen(p));
+        rstrip(text);
+        ModernAlsa::sample_format sf;
+        if (!parse_sample_format(text, &sf)) return parse_error_code::unknown_sample_format;
+        fmt.format = sf;
+        fmt.has_format = true;
+        return parse_error_code::none;
+    }
+
+    return parse_error_code::unknown_format_field;
+}
+
 } // namespace
 
 parse_error config::parse(const char *text) noexcept {
@@ -325,8 +427,14 @@ parse_error config::parse(const char *text) noexcept {
             continue;
         }
 
-        parse_error_code code = cur.in_card_section ? parse_card_field(cur, trimmed)
-                                                     : parse_directive_line(cur, trimmed);
+        parse_error_code code;
+        if (cur.in_card_section) {
+            code = parse_card_field(cur, trimmed);
+        } else if (cur.in_format_section) {
+            code = parse_format_field(cur, trimmed);
+        } else {
+            code = parse_directive_line(cur, trimmed);
+        }
         if (code != parse_error_code::none) return {code, line_no};
     }
 

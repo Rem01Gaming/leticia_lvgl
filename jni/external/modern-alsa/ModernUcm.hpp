@@ -6,6 +6,20 @@
 
 /**
  * @brief A lightweight, dependency-free INI-like config parser and applier for ALSA use cases, built on ModernAlsa::mixer.
+ *
+ * Grammar, in addition to [card:x], [verb:x], and [verb:x/device:y]
+ * sections documented alongside `directive`:
+ *
+ *   [verb:HiFi/format]
+ *   channels = 2
+ *   rate = 48000
+ *   sample_format = s16_le
+ *
+ * All three fields are optional; only fields actually present in the
+ * config override pcm_format::resolve()'s baseline. Recognized
+ * sample_format values: s8, s16_le, s24_3le, s24_le, s32_le, u8, u16_le
+ * (the formats a phone playback path realistically uses; anything else
+ * is a parse error rather than a silent guess).
  */
 namespace ModernUcm {
 
@@ -41,6 +55,10 @@ enum class parse_error_code {
     too_many_devices,
     too_many_directives,
     out_of_memory,
+    unknown_format_field,
+    unknown_sample_format,
+    invalid_channels,
+    invalid_rate,
 };
 
 struct parse_error final {
@@ -82,6 +100,31 @@ struct directive final {
 };
 
 // ============================================================================
+// pcm_format
+// ============================================================================
+
+/**
+ * @brief The PCM hw_params a verb expects to be opened with. Fields default
+ * to 0/none, meaning "not specified in the config" rather than a real
+ * value; check has_* before trusting a field, or use resolve() to merge
+ * onto a caller-supplied ModernAlsa::pcm_config baseline.
+ */
+struct pcm_format final {
+    size_type channels = 0;              ///< 0 = not specified
+    size_type rate = 0;                  ///< 0 = not specified
+    ModernAlsa::sample_format format = ModernAlsa::sample_format::s16_le;
+    bool has_channels = false;
+    bool has_rate = false;
+    bool has_format = false;
+
+    /**
+     * @brief Returns a copy of @p baseline with any fields this pcm_format
+     * specifies overwritten, and unspecified fields left as baseline had them.
+     */
+    ModernAlsa::pcm_config resolve(const ModernAlsa::pcm_config &baseline) const noexcept;
+};
+
+// ============================================================================
 // device / verb
 // ============================================================================
 
@@ -116,6 +159,7 @@ struct verb final {
     size_type directive_count = 0;
     device devices[max_devices_per_verb()];
     size_type device_count = 0;
+    pcm_format format; ///< Unset fields (has_* == false) if no [format] block was given.
 
     const device *find_device(const char *device_name) const noexcept;
 };

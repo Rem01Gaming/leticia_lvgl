@@ -29,6 +29,16 @@ uint64_t now_ms()
     return static_cast<uint64_t>(ts.tv_sec) * 1000 + (ts.tv_nsec / 1000000);
 }
 
+bool led_name_looks_like_backlight(const char *name)
+{
+    static const char *hints[] = {"lcd-backlight", "lcd_backlight", "wled", "backlight"};
+    for (const char *hint : hints) {
+        if (strstr(name, hint) != nullptr)
+            return true;
+    }
+    return false;
+}
+
 } // namespace
 
 power_manager::~power_manager()
@@ -61,6 +71,19 @@ bool power_manager::set_display_blank_sysfs(bool blank)
 
 bool power_manager::set_display_blank(bool blank)
 {
+    if (!device_config_.screen_blank_supported) {
+        // Unconfigured devices, and any device explicitly marked
+        // screen_blank_supported=false, skip fb-level blanking entirely.
+        // Many panels (this codebase's original test device included, an
+        // MTK mtkfb panel) either ignore FBIOBLANK/fb0-blank outright or
+        // blank without ever reliably recovering on UNBLANK -- backlight
+        // fade (see finish_sleep_after_fade()/set_state()) is the part of
+        // "sleep" guaranteed to work everywhere, so that's the default.
+        // Set screen_blank_supported=true in device.conf once a device has
+        // actually been verified to blank AND recover correctly.
+        return true;
+    }
+
     if (fb_fd_ >= 0) {
         int blank_mode = blank ? FB_BLANK_POWERDOWN : FB_BLANK_UNBLANK;
         if (ioctl(fb_fd_, FBIOBLANK, blank_mode) == 0) {
@@ -79,47 +102,76 @@ bool power_manager::set_display_blank(bool blank)
 
 bool power_manager::find_backlight()
 {
-    DIR *dir = opendir("/sys/class/backlight");
-    if (dir == nullptr)
-        return false;
-
-    bool found = false;
-    struct dirent *entry;
-
-    while ((entry = readdir(dir)) != nullptr) {
-        if (entry->d_name[0] == '.')
-            continue;
-
-        char max_path[160];
-        char brightness_path[160];
-        snprintf(max_path, sizeof(max_path), "/sys/class/backlight/%s/max_brightness", entry->d_name);
-        snprintf(brightness_path, sizeof(brightness_path), "/sys/class/backlight/%s/brightness", entry->d_name);
-
-        FILE *f = fopen(max_path, "r");
-        if (f == nullptr)
-            continue;
-
-        int max_val = 0;
-        int scanned = fscanf(f, "%d", &max_val);
-        fclose(f);
-
-        if (scanned != 1 || max_val <= 0)
-            continue;
-
-        int fd = open(brightness_path, O_WRONLY);
-        if (fd < 0)
-            continue;
-        close(fd);
-
-        backlight_path_ = brightness_path;
-        max_brightness_ = max_val;
-        found = true;
-        fprintf(stderr, "Using backlight: %s (max %d)\n", brightness_path, max_val);
-        break;
+    if (device_config_.configured()) {
+        int fd = open(device_config_.backlight_path.c_str(), O_WRONLY);
+        if (fd < 0) {
+            perror("device_config backlight_path: open");
+        } else {
+            close(fd);
+            backlight_path_ = device_config_.backlight_path;
+            max_brightness_ = device_config_.max_brightness > 0 ? device_config_.max_brightness : 255;
+            fprintf(stderr, "Using configured backlight: %s (max %d)\n",
+                    backlight_path_.c_str(), max_brightness_);
+            return true;
+        }
+        fprintf(stderr, "Configured backlight_path unusable, falling back to auto-detect\n");
     }
 
-    closedir(dir);
-    return found;
+    // Auto-detect fallback for devices without a device.conf. Real panels
+    // show up under either the generic backlight class or (commonly on
+    // MediaTek boards) as a named LED-class device -- try both.
+    static const char *class_dirs[] = {
+        "/sys/class/backlight",
+        "/sys/class/leds",
+    };
+
+    for (const char *class_dir : class_dirs) {
+        DIR *dir = opendir(class_dir);
+        if (dir == nullptr)
+            continue;
+
+        bool is_led_dir = strcmp(class_dir, "/sys/class/leds") == 0;
+        struct dirent *entry;
+
+        while ((entry = readdir(dir)) != nullptr) {
+            if (entry->d_name[0] == '.')
+                continue;
+
+            if (is_led_dir && !led_name_looks_like_backlight(entry->d_name))
+                continue;
+
+            char max_path[160];
+            char brightness_path[160];
+            snprintf(max_path, sizeof(max_path), "%s/%s/max_brightness", class_dir, entry->d_name);
+            snprintf(brightness_path, sizeof(brightness_path), "%s/%s/brightness", class_dir, entry->d_name);
+
+            FILE *f = fopen(max_path, "r");
+            if (f == nullptr)
+                continue;
+
+            int max_val = 0;
+            int scanned = fscanf(f, "%d", &max_val);
+            fclose(f);
+
+            if (scanned != 1 || max_val <= 0)
+                continue;
+
+            int fd = open(brightness_path, O_WRONLY);
+            if (fd < 0)
+                continue;
+            close(fd);
+
+            backlight_path_ = brightness_path;
+            max_brightness_ = max_val;
+            fprintf(stderr, "Using auto-detected backlight: %s (max %d)\n", brightness_path, max_val);
+            closedir(dir);
+            return true;
+        }
+
+        closedir(dir);
+    }
+
+    return false;
 }
 
 int power_manager::read_current_brightness_percent()
@@ -157,13 +209,20 @@ void power_manager::write_brightness_percent(int percent)
     int raw = (percent * max_brightness_) / 100;
 
     int fd = open(backlight_path_.c_str(), O_WRONLY);
-    if (fd < 0)
+    if (fd < 0) {
+        perror("write_brightness_percent: open");
         return;
+    }
 
     char buf[16];
     int len = snprintf(buf, sizeof(buf), "%d", raw);
-    write(fd, buf, static_cast<size_t>(len));
+    ssize_t written = write(fd, buf, static_cast<size_t>(len));
     close(fd);
+
+    if (written != len) {
+        perror("write_brightness_percent: write");
+        return;
+    }
 
     brightness_percent_ = percent;
 }
@@ -239,12 +298,28 @@ void power_manager::dim_hold_timer_trampoline(lv_timer_t *timer)
 
 void power_manager::finish_sleep_after_fade()
 {
-    if (set_display_blank(true)) {
-        current_state_ = power_state::sleep;
-        fprintf(stderr, "Display turned OFF (sleep)\n");
-    } else {
-        fprintf(stderr, "Failed to blank display after fade\n");
-    }
+    if (!set_display_blank(true))
+        fprintf(stderr, "Warning: fb blank request failed, continuing in backlight-off sleep\n");
+
+    current_state_ = power_state::sleep;
+    fprintf(stderr, "Display turned OFF (sleep)\n");
+}
+
+void power_manager::set_touch_indev(lv_indev_t *indev)
+{
+    touch_indev_ = indev;
+
+    // Apply immediately so this is safe to call at any point, including
+    // after the display is already asleep (e.g. touch node hot-plugged).
+    set_touch_enabled(current_state_ != power_state::sleep);
+}
+
+void power_manager::set_touch_enabled(bool enabled)
+{
+    if (touch_indev_ == nullptr)
+        return;
+
+    lv_indev_enable(touch_indev_, enabled);
 }
 
 void power_manager::on_input_event(const input_event_t &event)
@@ -293,12 +368,13 @@ void power_manager::activity_timer_trampoline(lv_timer_t *timer)
      * fixed delay, independent of sleep_timeout_sec_. */
 }
 
-void power_manager::init(lv_display_t *disp)
+void power_manager::init(lv_display_t *disp, const device_config_t &config)
 {
     if (initialized_)
         return;
 
     disp_ = disp;
+    device_config_ = config;
     current_state_ = power_state::on;
     sleep_timeout_sec_ = kDefaultSleepTimeoutSec;
     dim_timeout_sec_ = kDefaultDimTimeoutSec;
@@ -310,7 +386,7 @@ void power_manager::init(lv_display_t *disp)
     if (find_backlight()) {
         write_brightness_percent(100);
     } else {
-        fprintf(stderr, "No controllable backlight found, dim will fall back to blanking\n");
+        fprintf(stderr, "No controllable backlight found, sleep/dim will have no visible effect\n");
     }
 
     const char *fb_path = getenv("FB_DEVICE");
@@ -341,7 +417,8 @@ void power_manager::init(lv_display_t *disp)
 
     initialized_ = true;
 
-    fprintf(stderr, "Power management initialized\n");
+    fprintf(stderr, "Power management initialized (screen_blank_supported=%s)\n",
+            device_config_.screen_blank_supported ? "true" : "false");
 }
 
 bool power_manager::set_state(power_state state)
@@ -354,12 +431,12 @@ bool power_manager::set_state(power_state state)
 
     switch (state) {
         case power_state::on: {
-            if (!set_display_blank(false)) {
-                fprintf(stderr, "Failed to unblank display, state unchanged\n");
-                return false;
-            }
+            if (!set_display_blank(false))
+                fprintf(stderr, "Warning: fb unblank request failed, backlight restored anyway\n");
+
             current_state_ = power_state::on;
             fprintf(stderr, "Display turned ON\n");
+            set_touch_enabled(true);
             cancel_dim_hold();
             if (fade_timer_ != nullptr) {
                 lv_timer_delete(fade_timer_);
@@ -369,14 +446,25 @@ bool power_manager::set_state(power_state state)
             /* Wake is instant, no fade-in, matches real hardware. */
             write_brightness_percent(100);
             lv_obj_invalidate(lv_screen_active());
-            lv_timer_handler();
+            /* Do NOT call lv_timer_handler() here. set_state() can be
+             * reached from toggle_sleep() -> on_input_event(), which is
+             * itself invoked from input_monitor_.poll() inside
+             * activity_timer_trampoline() -- an LVGL timer callback. Calling
+             * lv_timer_handler() re-entrantly from inside a running timer
+             * callback is unsafe: it corrupts LVGL's internal timer list
+             * bookkeeping (including our own fade_timer_/dim_hold_timer_).
+             * The invalidated screen is simply redrawn on the next regular
+             * tick instead.
+             */
             break;
         }
 
         case power_state::dimmed: {
-            /* Panel stays unblanked, only the backlight fades down to half
-             * of whatever it currently is, then holds there for
-             * kDimHoldMs before escalating to sleep on its own. */
+            /* Panel stays interactive: only the backlight fades down to
+             * half of whatever it currently is, then holds there for
+             * kDimHoldMs before escalating to sleep on its own. Touch stays
+             * enabled here -- dimmed is still "awake", just warning the
+             * user before a real sleep. */
             current_state_ = power_state::dimmed;
             fprintf(stderr, "Display DIMMED\n");
             int current = read_current_brightness_percent();
@@ -389,9 +477,22 @@ bool power_manager::set_state(power_state state)
 
         case power_state::sleep:
             cancel_dim_hold();
+            /* Commit the state change (including disabling touch) synchronously
+             * so toggle_sleep() sees the correct state immediately and no
+             * stray taps land during the ~150ms fade-to-black below. Leaving
+             * current_state_ set only inside finish_sleep_after_fade() created
+             * a window where a second power-button press during the fade
+             * would read current_state_ as still "on" and re-enter this case,
+             * corrupting the pending fade sequence. */
+            current_state_ = power_state::sleep;
+            /* Disabling the touch indev here, not after the fade completes,
+             * means a finger already on the glass at the moment sleep is
+             * triggered stops generating events immediately, rather than
+             * being able to land one more accidental tap during the fade. */
+            set_touch_enabled(false);
             /* Fade whatever backlight is left down to black, then blank the
-             * panel only once that fade completes, instead of cutting
-             * straight to off. */
+             * panel (if this device supports it) only once that fade
+             * completes, instead of cutting straight to off. */
             fade_brightness_to(0, [this] { finish_sleep_after_fade(); });
             return true;
 
