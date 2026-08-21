@@ -468,7 +468,7 @@ bool power_manager::set_state(power_state state)
             current_state_ = power_state::dimmed;
             fprintf(stderr, "Display DIMMED\n");
             int current = read_current_brightness_percent();
-            fade_brightness_to(current / 2);
+            fade_brightness_to(current / 4);
             cancel_dim_hold();
             dim_hold_timer_ = lv_timer_create(dim_hold_timer_trampoline, kDimHoldMs, this);
             lv_timer_set_repeat_count(dim_hold_timer_, 1);
