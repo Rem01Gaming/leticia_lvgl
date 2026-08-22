@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <linux/fb.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <cerrno>
 #include <cstdio>
@@ -98,6 +99,59 @@ bool power_manager::set_display_blank(bool blank)
 
     fprintf(stderr, "All blanking methods failed\n");
     return false;
+}
+
+/**
+ * @brief Paint the framebuffer's actual pixel memory black, independent of
+ *        FBIOBLANK/backlight. On panels where screen_blank_supported is
+ *        false (the common case -- see set_display_blank()), backlight
+ *        fading to 0 stops the LED array from lighting the panel but does
+ *        NOT clear whatever frame is still latched in the LCD itself, so
+ *        the old UI stays faintly visible under a raking light. This is a
+ *        one-shot direct write via mmap, bypassing LVGL's flush/timer
+ *        pipeline entirely (safe to call from inside the fade-complete
+ *        callback, which itself can run from inside an LVGL timer tick).
+ */
+void power_manager::blank_framebuffer_pixels()
+{
+    if (fb_fd_ < 0)
+        return;
+
+    struct fb_var_screeninfo vinfo;
+    struct fb_fix_screeninfo finfo;
+
+    if (ioctl(fb_fd_, FBIOGET_VSCREENINFO, &vinfo) != 0) {
+        perror("blank_framebuffer_pixels: FBIOGET_VSCREENINFO");
+        return;
+    }
+    if (ioctl(fb_fd_, FBIOGET_FSCREENINFO, &finfo) != 0) {
+        perror("blank_framebuffer_pixels: FBIOGET_FSCREENINFO");
+        return;
+    }
+
+    size_t screensize = static_cast<size_t>(finfo.smem_len);
+    if (screensize == 0) {
+        // Some drivers report a bogus/zero smem_len; fall back to a
+        // computed estimate from the mode info rather than giving up.
+        screensize = static_cast<size_t>(vinfo.yres_virtual) * finfo.line_length;
+    }
+    if (screensize == 0)
+        return;
+
+    void *mem = mmap(nullptr, screensize, PROT_WRITE, MAP_SHARED, fb_fd_, 0);
+    if (mem == MAP_FAILED) {
+        perror("blank_framebuffer_pixels: mmap");
+        return;
+    }
+
+    // Covers both single- and double-buffered devices (smem_len spans all
+    // panning buffers when double-buffered), and works regardless of bpp
+    // since all-zero bytes is black in every pixel format this driver is
+    // expected to see (RGB565/RGB888/XRGB8888/etc all encode black as 0).
+    memset(mem, 0, screensize);
+
+    munmap(mem, screensize);
+    fprintf(stderr, "Framebuffer pixels cleared to black (%zu bytes)\n", screensize);
 }
 
 bool power_manager::find_backlight()
@@ -301,6 +355,15 @@ void power_manager::finish_sleep_after_fade()
     if (!set_display_blank(true))
         fprintf(stderr, "Warning: fb blank request failed, continuing in backlight-off sleep\n");
 
+    /* set_display_blank() is a no-op on most panels (screen_blank_supported
+     * defaults to false -- see its comment), so the LCD's last frame is
+     * typically still latched even though the backlight above has already
+     * faded to 0. Clear the actual pixel memory too so the panel is truly
+     * black rather than just unlit; this is a direct mmap write, not
+     * routed through LVGL, so it's safe to do unconditionally here even
+     * when set_display_blank() above did succeed. */
+    blank_framebuffer_pixels();
+
     current_state_ = power_state::sleep;
     fprintf(stderr, "Display turned OFF (sleep)\n");
 }
@@ -443,19 +506,36 @@ bool power_manager::set_state(power_state state)
                 fade_timer_ = nullptr;
             }
             fade_complete_cb_ = nullptr;
-            /* Wake is instant, no fade-in, matches real hardware. */
-            write_brightness_percent(100);
             lv_obj_invalidate(lv_screen_active());
-            /* Do NOT call lv_timer_handler() here. set_state() can be
-             * reached from toggle_sleep() -> on_input_event(), which is
-             * itself invoked from input_monitor_.poll() inside
-             * activity_timer_trampoline() -- an LVGL timer callback. Calling
-             * lv_timer_handler() re-entrantly from inside a running timer
-             * callback is unsafe: it corrupts LVGL's internal timer list
-             * bookkeeping (including our own fade_timer_/dim_hold_timer_).
-             * The invalidated screen is simply redrawn on the next regular
-             * tick instead.
+            /* Do NOT bump the backlight or call lv_timer_handler()/
+             * lv_refr_now() here. set_state() can be reached from
+             * toggle_sleep() -> on_input_event(), which is itself invoked
+             * from input_monitor_.poll() inside activity_timer_trampoline()
+             * -- an LVGL timer callback. Calling into LVGL's redraw/timer
+             * machinery re-entrantly from inside a running timer callback is
+             * unsafe: it corrupts LVGL's internal timer list bookkeeping
+             * (including our own fade_timer_/dim_hold_timer_).
+             *
+             * The panel was just cleared to black by a direct mmap write
+             * (blank_framebuffer_pixels(), bypassing LVGL entirely). If we
+             * restored the backlight now and let the real repaint trickle
+             * in over later ticks, the panel would visibly show that black
+             * frame -- or a partially-composited one, since LVGL's default
+             * partial-render mode can flush the label/button's own
+             * invalidated area before the rest of the background catches up
+             * -- while already lit. That's the glitchy "square" around the
+             * widgets on wake.
+             *
+             * Instead, flag that a forced full redraw AND the backlight
+             * restore are both owed once we're back at the top level, and
+             * do the redraw first: compose the complete correct frame into
+             * the (still dark) panel via lv_refr_now(), THEN raise the
+             * backlight. The panel then never shows anything but the final
+             * frame -- there's no partial state to be caught mid-composite
+             * regardless of how LVGL batches its flushes. See
+             * service_pending_wake().
              */
+            pending_full_redraw_ = true;
             break;
         }
 
@@ -513,6 +593,30 @@ bool power_manager::set_state(power_state state)
 power_state power_manager::get_state() const
 {
     return current_state_;
+}
+
+bool power_manager::service_pending_wake()
+{
+    if (!pending_full_redraw_)
+        return false;
+
+    pending_full_redraw_ = false;
+
+    /* Compose the full correct frame into the framebuffer while the panel
+     * is still dark (backlight was left at 0 by finish_sleep_after_fade();
+     * set_state(on) deliberately did not touch it -- see its comment).
+     * Safe to call lv_refr_now() here: we're at the top level in the main
+     * loop, not inside any LVGL timer callback. */
+    if (disp_ != nullptr)
+        lv_refr_now(disp_);
+
+    /* Only now bring the backlight back up, once a complete frame is
+     * already sitting in the framebuffer -- so the panel goes straight
+     * from black to the final correct image, with nothing partial or
+     * stale ever visible in between. */
+    write_brightness_percent(100);
+
+    return true;
 }
 
 power_state power_manager::toggle_sleep()

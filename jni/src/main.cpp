@@ -180,6 +180,15 @@ int main(int argc, char *argv[])
 
     while (!g_should_exit) {
         uint32_t idle_ms = lv_timer_handler();
+
+        /* If we just woke from sleep, finish that transition here: forces
+         * a full redraw of the still-dark panel, then restores the
+         * backlight -- in that order, so nothing partial or stale is ever
+         * visible while lit. See power_manager::service_pending_wake().
+         * Safe here: we're at the top level, right after
+         * lv_timer_handler() and outside any LVGL callback. */
+        power.service_pending_wake();
+
         if (idle_ms == LV_NO_TIMER_READY)
             idle_ms = 50;
         usleep(idle_ms * 1000);

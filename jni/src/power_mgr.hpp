@@ -101,6 +101,32 @@ public:
      */
     void deinit();
 
+    /**
+     * @brief Finish a pending wake-from-sleep transition, if one is owed.
+     *        set_state(on) cannot safely call into LVGL's redraw machinery
+     *        or restore the backlight itself -- it can be reached
+     *        re-entrantly from inside activity_timer_trampoline() (an LVGL
+     *        timer callback), and calling lv_timer_handler()/lv_refr_now()
+     *        re-entrantly corrupts LVGL's internal timer bookkeeping. So it
+     *        just marks the wake as pending; call this from the main loop,
+     *        right after lv_timer_handler() and outside any LVGL callback,
+     *        once per iteration.
+     *
+     *        Order matters here: this forces a full redraw of the
+     *        (currently still dark, just-cleared-to-black) panel via
+     *        lv_refr_now() FIRST, composing the complete correct frame
+     *        while nothing is lit to see it, and only THEN restores the
+     *        backlight. That way the panel never has a chance to display a
+     *        black or partially-composited frame while lit -- there's no
+     *        window left for LVGL's partial-render dirty-rect flushing to
+     *        show the label/button before the rest of the background
+     *        catches up, which is what caused the glitchy "square" around
+     *        those widgets when the redraw and backlight restore could
+     *        race.
+     * @return true if a wake was pending (and has now been completed).
+     */
+    bool service_pending_wake();
+
 private:
     lv_display_t *disp_ = nullptr;
     int fb_fd_ = -1;
@@ -111,6 +137,7 @@ private:
     uint64_t last_activity_time_ms_ = 0;
     bool pwr_button_enabled_ = true;
     bool initialized_ = false;
+    bool pending_full_redraw_ = false;
     lv_timer_t *activity_timer_ = nullptr;
 
     input_event_monitor input_monitor_;
@@ -129,6 +156,7 @@ private:
 
     bool set_display_blank(bool blank);
     bool set_display_blank_sysfs(bool blank);
+    void blank_framebuffer_pixels();
     bool find_backlight();
     int read_current_brightness_percent();
     void write_brightness_percent(int percent);
