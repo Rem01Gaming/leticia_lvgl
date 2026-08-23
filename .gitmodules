@@ -1,0 +1,3 @@
+[submodule "jni/external/modern-alsa"]
+	path = jni/external/modern-alsa
+	url = https://github.com/Rem01Gaming/modern-alsa.git
