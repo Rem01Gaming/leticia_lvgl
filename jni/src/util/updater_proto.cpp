@@ -51,7 +51,6 @@ void updater_proto::close() {
 
 } // namespace Leticia
 
-// Global bridge implementation
 namespace Leticia {
 static updater_proto *g_updater_proto = nullptr;
 

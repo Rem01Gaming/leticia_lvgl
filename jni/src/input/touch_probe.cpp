@@ -7,7 +7,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-namespace Leticia::TouchProbe {
+namespace Leticia::touch_probe {
 
 namespace {
 
@@ -65,4 +65,4 @@ std::optional<std::string> find() {
     return found;
 }
 
-} // namespace Leticia::TouchProbe
+} // namespace Leticia::touch_probe

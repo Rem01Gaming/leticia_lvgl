@@ -1,5 +1,5 @@
 #include "input_event.hpp"
-#include "updater_proto.hpp"
+#include "util/updater_proto.hpp"
 
 #include <cerrno>
 #include <climits>
@@ -31,10 +31,7 @@ bool test_bit(unsigned int bit, const unsigned long *bitmask) {
 }
 
 /**
- * @brief If @p fd reports SW_HEADPHONE_INSERT, reads its current switch
- * state via EVIOCGSW (not just capability). Distinct from
- * node_reports_watched_bits(), which only tests capability, not value.
- * @return true if the switch state was successfully read into *connected.
+ * @brief Reads the current state of a headphone switch.
  */
 bool try_read_headphone_switch_state(int fd, bool *connected) {
     unsigned long sw_cap_bits[(SW_MAX / (sizeof(unsigned long) * 8)) + 1] = {0};
@@ -142,12 +139,6 @@ bool input_event_monitor::open() {
                 key_sources_.push_back({fd, path});
                 Leticia::ui_print("input_event_monitor: watching %s", path);
 
-                // Read the jack's CURRENT state now, not just its future
-                // transitions -- otherwise headphones already plugged in
-                // before this process started would go undetected until
-                // an unplug/replug produces a fresh SW_HEADPHONE_INSERT
-                // event. First node that answers wins; only one should
-                // ever report this switch on a normal board.
                 if (!headphone_state_known_) {
                     bool connected = false;
                     if (try_read_headphone_switch_state(fd, &connected)) {

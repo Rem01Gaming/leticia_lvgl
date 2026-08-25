@@ -8,42 +8,23 @@
 #include <lvgl.h>
 
 #include "ModernAlsa.hpp"
-#include "device_config.hpp"
-#include "input_event.hpp"
-#include "ucm.hpp"
+#include "config/device_config.hpp"
+#include "input/input_event.hpp"
+#include "alsa_ucm.hpp"
 
 namespace Leticia {
 
 /**
- * @brief Which physical path audio is (or should be) routed through.
- *        unknown only occurs before the first jack read has happened.
+ * @brief Enumeration of audio output paths.
  */
 enum class audio_output {
-    unknown,
-    speaker,
-    headphones,
+    unknown,    /**< Unknown state. */
+    speaker,    /**< Speaker output. */
+    headphones, /**< Headphone output. */
 };
 
 /**
- * @brief Owns the UCM config, mixer, and a small self-contained 1kHz test
- *        tone generator, so the UCM routing this project built can
- *        actually be exercised against real hardware from the UI.
- *
- *        Automatically follows the headphone jack: on insert/remove, if a
- *        tone is currently playing it is live-rerouted (UCM's declared
- *        `conflicts` teardown fires via ucm::apply()'s previous_device
- *        parameter); if nothing is playing, only the tracked jack state
- *        updates, and the mixer is brought in sync the next time playback
- *        starts. See apply_output()'s doc comment for why two separate
- *        "what does the jack say" / "what did the mixer last get set to"
- *        states are tracked rather than one.
- *
- *        Owns its own input_event_monitor, independent of power_manager's.
- *        Two separate open() calls against the same evdev node are safe --
- *        the kernel gives each file descriptor its own independent event
- *        queue -- and this keeps the audio and power subsystems decoupled,
- *        matching how each subsystem in this codebase already owns its
- *        own resources rather than sharing them through a third party.
+ * @brief Manages audio routing and test tones.
  */
 class audio_manager final {
 public:
@@ -54,64 +35,60 @@ public:
     audio_manager &operator=(const audio_manager &) = delete;
 
     /**
-     * @brief Loads the UCM config (see device_config.hpp's
-     *        load_alsa_ucm_config_text() for where it's actually read
-     *        from) and opens the mixer for @p device_config.alsa_card.
-     * @return true if a UCM config was found, parsed, and the mixer
-     *         opened -- i.e. is_available() would return true.
-     *         false is not fatal to the caller: the UI should simply
-     *         show the test-tone control as unavailable rather than
-     *         treat this as a startup failure, the same way power_manager
-     *         degrades gracefully when no backlight is found.
+     * @brief Initializes the audio manager.
+     *
+     * @param device_config Device configuration.
+     * @param zip_path Path to the OTA zip file.
+     * @return true if initialized successfully, false otherwise.
      */
     bool init(const device_config_t &device_config, const std::string &zip_path);
 
     /**
-     * @brief Stops any playing tone and releases the mixer/pcm/input
-     *        resources. Safe to call multiple times.
+     * @brief Deinitializes the audio manager.
      */
     void deinit();
 
     /**
-     * @brief Whether a UCM config was loaded and the mixer is open, i.e.
-     *        whether start_test_tone() has any chance of succeeding.
+     * @brief Checks if audio services are available.
+     *
+     * @return true if available, false otherwise.
      */
-    bool is_available() const { return cfg_loaded_ && mixer_.is_open(); }
+    bool is_available() const {
+        return cfg_loaded_ && mixer_.is_open();
+    }
 
     /**
-     * @brief Starts the 1kHz test tone, routed to whichever output the
-     *        headphone jack currently indicates. No-op (returns true) if
-     *        already playing.
-     * @return false if is_available() is false or the pcm device could
-     *         not be opened/configured.
+     * @brief Starts the 1kHz test tone.
+     *
+     * @return true if started successfully, false otherwise.
      */
     bool start_test_tone();
 
     /**
-     * @brief Stops the test tone and closes the pcm device. Deliberately
-     *        does NOT tear down the mixer routing itself (no `disable`
-     *        pass on the currently-applied device) -- UCM's conflict
-     *        model only defines what happens when switching TO a
-     *        different device, not an explicit "off" device, and
-     *        inventing one wasn't needed for what this button does.
-     *        Mixer state is simply left as most recently applied; the
-     *        next start_test_tone() (on this device or after a jack
-     *        change) re-applies routing from scratch regardless.
+     * @brief Stops the test tone.
      */
     void stop_test_tone();
 
-    bool is_test_tone_playing() const { return tone_playing_; }
+    /**
+     * @brief Checks if the test tone is playing.
+     *
+     * @return true if playing, false otherwise.
+     */
+    bool is_test_tone_playing() const {
+        return tone_playing_;
+    }
 
     /**
-     * @brief Toggles start/stop. Convenience for a single UI button.
-     * @return The new playing state.
+     * @brief Toggles the test tone playback.
+     *
+     * @return New playback state.
      */
     bool toggle_test_tone();
 
     /**
-     * @brief Best current guess of the physical output, from the
-     *        headphone jack switch (see input_event_monitor). Falls back
-     *        to speaker if this board has no jack-sense switch at all.
+     * @brief Detects the current audio output.
+     *
+     * @return Detected audio output.
      */
     audio_output detected_output() const;
 
@@ -128,14 +105,7 @@ private:
     /// regardless of whether a tone is playing.
     audio_output detected_output_ = audio_output::unknown;
 
-    /// What the mixer was last actually set to via ucm::apply(), which
-    /// only happens when a tone starts or live-reroutes while playing.
-    /// Deliberately distinct from detected_output_: if the jack changes
-    /// while nothing is playing, detected_output_ moves immediately but
-    /// mixer_applied_output_ must NOT, or the next apply_output() call
-    /// would think the mixer is already at the new target (since it'd
-    /// compare against a value that silently tracked the jack instead of
-    /// reality) and skip the conflict teardown that's actually still owed.
+    /// What the mixer was last actually set to via ucm::apply()
     audio_output mixer_applied_output_ = audio_output::unknown;
 
     ModernAlsa::interleaved_pcm_writer pcm_;
@@ -150,11 +120,10 @@ private:
     std::array<int16_t, kMaxFillFrames * kMaxChannels> fill_buf_{};
 
     /**
-     * @brief Runs ucm::apply() for the "HiFi" verb toward @p target,
-     *        using mixer_applied_output_ (not detected_output_) as the
-     *        previous_device so conflict teardown fires correctly even
-     *        across a period where the jack changed but nothing applied.
-     *        Updates mixer_applied_output_ on success.
+     * @brief Applies audio routing to the target output.
+     *
+     * @param target Target audio output.
+     * @return true if applied successfully, false otherwise.
      */
     bool apply_output(audio_output target);
 

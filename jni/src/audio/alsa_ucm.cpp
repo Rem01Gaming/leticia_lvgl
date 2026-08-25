@@ -1,4 +1,4 @@
-#include "ucm.hpp"
+#include "alsa_ucm.hpp"
 
 #include <cerrno>
 #include <cstdio>
@@ -38,7 +38,7 @@ const char *parse_error::description() const noexcept {
 namespace {
 
 // ============================================================================
-// Small string helpers, deliberately not touching <string>/<vector>
+// Small string helpers
 // ============================================================================
 
 void copy_bounded(char *dest, size_type dest_size, const char *src, size_type src_len) noexcept {
@@ -69,8 +69,7 @@ void rstrip(char *line) noexcept {
 }
 
 /**
- * @brief Parses a `"quoted string"` starting at *p (which must point at
- * the opening quote). Advances *p past the closing quote on success.
+ * @brief Parses a quoted string.
  */
 bool parse_quoted(const char **p, char *out, size_type out_size) noexcept {
     const char *cursor = *p;
@@ -84,7 +83,7 @@ bool parse_quoted(const char **p, char *out, size_type out_size) noexcept {
         cursor++;
     }
     out[len] = '\0';
-    cursor++; // past closing quote
+    cursor++;
 
     *p = cursor;
     return true;
@@ -133,19 +132,21 @@ const verb *config::find_verb(const char *verb_name) const noexcept {
 namespace {
 
 /**
- * @brief Tracks which section the parser is currently inside, so plain
- * `key = value` and `directive "ctl" = value` lines land in the right place.
+ * @brief Tracks the current section of the parser.
  */
 struct parse_cursor final {
     config *cfg = nullptr;
     verb *current_verb = nullptr;
-    device *current_device = nullptr; // null while inside a bare [verb:X] section
+    device *current_device = nullptr;
     bool in_card_section = false;
 };
 
 /**
- * @brief Appends one directive to whichever section is currently active
- * (a device section if one is open, otherwise the enclosing verb).
+ * @brief Appends a directive to the active section.
+ *
+ * @param cur Parser cursor.
+ * @param d Directive to push.
+ * @return Parse error code.
  */
 parse_error_code push_directive(parse_cursor &cur, const directive &d) noexcept {
     if (cur.current_verb == nullptr) return parse_error_code::malformed_section;
@@ -165,9 +166,11 @@ parse_error_code push_directive(parse_cursor &cur, const directive &d) noexcept 
 }
 
 /**
- * @brief Parses a `[card:name]`, `[verb:name]`, or `[verb:name/device:name]`
- * header. @p body points just past the '[' with the trailing ']' already
- * located by the caller and replaced with '\0'.
+ * @brief Parses a section header.
+ *
+ * @param cur Parser cursor.
+ * @param body Section header body.
+ * @return Parse error code.
  */
 parse_error_code parse_section_header(parse_cursor &cur, char *body) noexcept {
     // card:<name>
@@ -211,9 +214,8 @@ parse_error_code parse_section_header(parse_cursor &cur, char *body) noexcept {
     cur.current_verb = v;
     cur.current_device = nullptr;
 
-    if (slash == nullptr) return parse_error_code::none; // bare [verb:X]
+    if (slash == nullptr) return parse_error_code::none;
 
-    // .../device:<name>
     char *device_part = slash + 1;
     if (strncmp(device_part, "device:", 7) != 0) return parse_error_code::malformed_section;
     char *device_name_str = device_part + 7;
@@ -236,8 +238,11 @@ parse_error_code parse_section_header(parse_cursor &cur, char *body) noexcept {
 }
 
 /**
- * @brief Parses one `enable "ctl" [= value]`, `disable "ctl"`, or
- * `value "ctl" = value` line and appends it to the active section.
+ * @brief Parses a directive line.
+ *
+ * @param cur Parser cursor.
+ * @param line Line text.
+ * @return Parse error code.
  */
 parse_error_code parse_directive_line(parse_cursor &cur, const char *line) noexcept {
     directive_kind kind;
@@ -279,15 +284,18 @@ parse_error_code parse_directive_line(parse_cursor &cur, const char *line) noexc
     } else if (kind == directive_kind::value) {
         return parse_error_code::missing_value;
     } else {
-        d.val_kind = value_kind::none; // bare enable/disable of a boolean-ish control
+        d.val_kind = value_kind::none;
     }
 
     return push_directive(cur, d);
 }
 
 /**
- * @brief Parses a bare `key = value` line, valid only directly inside a
- * `[card:...]` section (currently just `name = "..."`).
+ * @brief Parses a card field.
+ *
+ * @param cur Parser cursor.
+ * @param line Line text.
+ * @return Parse error code.
  */
 parse_error_code parse_card_field(parse_cursor &cur, const char *line) noexcept {
     if (strncmp(line, "name", 4) != 0) return parse_error_code::unknown_directive;
@@ -304,13 +312,12 @@ parse_error_code parse_card_field(parse_cursor &cur, const char *line) noexcept 
 }
 
 /**
- * @brief Recognizes `channels = N`, `conflicts = "Name"`, `playback_pcm = N`,
- * and `capture_pcm = N` lines and, if the line is one of these four keys,
- * applies it to whichever section is currently open. Lines that aren't
- * shaped like one of these keys are left alone (*out_recognized set to
- * false) so the caller falls through to directive parsing instead; this
- * is unambiguous because directive lines always start with
- * enable/disable/value, never with a bare `key =`.
+ * @brief Parses a property field.
+ *
+ * @param cur Parser cursor.
+ * @param line Line text.
+ * @param out_recognized Whether the field was recognized.
+ * @return Parse error code.
  */
 parse_error_code parse_property_field(parse_cursor &cur, const char *line, bool *out_recognized) noexcept {
     *out_recognized = false;
@@ -352,7 +359,6 @@ parse_error_code parse_property_field(parse_cursor &cur, const char *line, bool 
 
     if (strcmp(key, "playback_pcm") == 0 || strcmp(key, "capture_pcm") == 0) {
         *out_recognized = true;
-        // Must be directly inside [verb:X], not [verb:X/device:Y].
         if (cur.current_verb == nullptr || cur.current_device != nullptr)
             return parse_error_code::pcm_device_outside_verb;
 
@@ -454,12 +460,12 @@ parse_error config::parse_file(const char *path) noexcept {
 namespace {
 
 /**
- * @brief Drives one directive against whichever control it names,
- * dispatching on the control's actual kernel element type rather than
- * trusting the config to have gotten it right.
- * @return true if the control existed and the write succeeded, or the
- *         control simply doesn't exist on this card (skipped, not fatal).
- *         false only on a hard I/O failure from the ioctl itself.
+ * @brief Applies a single directive to the mixer.
+ *
+ * @param mx Mixer instance.
+ * @param d Directive to apply.
+ * @param out_error Error code on failure.
+ * @return true if successful, false otherwise.
  */
 bool apply_one(const ModernAlsa::mixer &mx, const directive &d, int *out_error) noexcept {
     const ModernAlsa::mixer_ctl *ctl = mx.get_ctl_by_name(d.control_name);
@@ -502,9 +508,13 @@ bool apply_sequence(const ModernAlsa::mixer &mx, const directive *directives, si
 }
 
 /**
- * @brief Runs @p directives with enable/disable flipped, skipping
- * directive_kind::value entries (no natural inverse). Used to tear down
- * a previously-active conflicting device before a new one comes up.
+ * @brief Runs directives with enable and disable flipped.
+ *
+ * @param mx Mixer instance.
+ * @param directives Directive sequence.
+ * @param count Number of directives.
+ * @param out_error Error code on failure.
+ * @return true if successful, false otherwise.
  */
 bool apply_sequence_inverted(const ModernAlsa::mixer &mx, const directive *directives, size_type count, int *out_error) noexcept {
     for (size_type i = 0; i < count; i++) {

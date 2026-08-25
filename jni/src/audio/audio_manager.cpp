@@ -1,5 +1,5 @@
 #include "audio_manager.hpp"
-#include "updater_proto.hpp"
+#include "util/updater_proto.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -10,7 +10,7 @@ namespace {
 
 constexpr size_t kSampleRate = 48000;
 constexpr double kToneFrequencyHz = 1000.0;
-constexpr double kToneAmplitude = 0.3 * 32767.0; // conservative, avoid a startling first play
+constexpr double kToneAmplitude = 0.3 * 32767.0;
 constexpr double kTwoPi = 6.283185307179586;
 constexpr uint32_t kFillIntervalMs = 20;
 constexpr uint32_t kJackPollIntervalMs = 250;
@@ -46,8 +46,7 @@ bool audio_manager::init(const device_config_t &device_config, const std::string
             Leticia::ui_print("audio_manager: UCM config parse error: %s (line %u)", err.description(), err.line);
         } else {
             cfg_loaded_ = true;
-            Leticia::ui_print("audio_manager: loaded UCM config for card '%s' (%s)", cfg_.card_name,
-                              cfg_.card_display_name);
+            Leticia::ui_print("audio_manager: loaded UCM config for card '%s' (%s)", cfg_.card_name, cfg_.card_display_name);
         }
     } else {
         Leticia::ui_print("audio_manager: no UCM config found, audio test unavailable");
@@ -132,8 +131,9 @@ bool audio_manager::start_test_tone() {
         return false;
     }
 
-    // Bring the mixer in sync with the jack now, even if it changed while
-    // nothing was playing and mixer_applied_output_ is stale or unknown.
+    /**
+     * @brief Synchronizes the mixer with the headphone jack.
+     */
     if (!apply_output(detected_output_)) {
         Leticia::ui_print("audio_manager: could not apply routing, aborting test tone");
         return false;
@@ -152,28 +152,27 @@ bool audio_manager::start_test_tone() {
     if (dev != nullptr && dev->channels != 0) {
         if (dev->channels > kMaxChannels) {
             Leticia::ui_print("audio_manager: device declares %zu channels, clamping to %zu",
-                              dev->channels, kMaxChannels);
+                              dev->channels,
+                              kMaxChannels);
         } else {
             channels = dev->channels;
         }
     }
 
-    // Live-probe before committing to an open, per this project's
-    // established discipline: a static config field is never trusted for
-    // what the kernel will actually accept, only for board facts (like
-    // channels above) the kernel has no query for. This is advisory here
-    // -- the tone is a synthesized, native-rate test signal, so a probe
-    // failure is logged but the open is still attempted, since the probe
-    // itself can be wrong in ways an actual open/setup will reveal more
-    // reliably anyway.
+    /**
+     * @brief Probes PCM parameters.
+     */
     {
         ModernAlsa::pcm_params params;
         ModernAlsa::result pr = params.open(card_, device_index, false);
         if (!pr.failed()) {
-                if (!params.test_config(channels, kSampleRate, ModernAlsa::sample_format::s16_le)) {
+            if (!params.test_config(channels, kSampleRate, ModernAlsa::sample_format::s16_le)) {
                 Leticia::ui_print(
-                        "audio_manager: pcm %u,%zu may not support %zu ch / %zu Hz / s16_le, attempting anyway",
-                        card_, device_index, channels, kSampleRate);
+                    "audio_manager: pcm %u,%zu may not support %zu ch / %zu Hz / s16_le, attempting anyway",
+                    card_,
+                    device_index,
+                    channels,
+                    kSampleRate);
             }
             params.close();
         }
@@ -189,7 +188,7 @@ bool audio_manager::start_test_tone() {
     config.channels = channels;
     config.rate = kSampleRate;
     config.format = ModernAlsa::sample_format::s16_le;
-    config.disable_resampling = true; // synthesized at native rate, no resampling should ever be needed
+    config.disable_resampling = true;
 
     r = pcm_.setup(config);
     if (r.failed()) {
@@ -209,8 +208,9 @@ bool audio_manager::start_test_tone() {
     phase_ = 0.0;
     tone_playing_ = true;
 
-    // Prime the ring buffer before the periodic timer starts, so the
-    // first tick isn't racing an underrun on an empty buffer.
+    /**
+     * @brief Primes the ring buffer before the timer starts.
+     */
     fill_buffer();
 
     fill_timer_ = lv_timer_create(fill_timer_trampoline, kFillIntervalMs, this);

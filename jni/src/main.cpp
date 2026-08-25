@@ -7,12 +7,12 @@
 #include <lvgl.h>
 
 #include "audio/audio_manager.hpp"
-#include "device_config.hpp"
-#include "parent_mute.hpp"
-#include "power_mgr.hpp"
-#include "touch_probe.hpp"
-#include "ui_scale.hpp"
-#include "updater_proto.hpp"
+#include "config/device_config.hpp"
+#include "gui/ui_scale.hpp"
+#include "input/touch_probe.hpp"
+#include "power/power_manager.hpp"
+#include "util/parent_mute.hpp"
+#include "util/updater_proto.hpp"
 
 namespace {
 
@@ -29,7 +29,9 @@ void exit_btn_event_cb(lv_event_t *e) {
 }
 
 /**
- * @brief Callback for user interactions to reset activity timer and wake display if sleeping
+ * @brief Handles user activity events to reset timers and wake the display.
+ *
+ * @param e LVGL event pointer.
  */
 void user_activity_event_cb(lv_event_t *e) {
     auto *power = static_cast<Leticia::power_manager *>(lv_event_get_user_data(e));
@@ -42,12 +44,9 @@ void user_activity_event_cb(lv_event_t *e) {
 }
 
 /**
- * @brief Toggles the 1kHz test tone and updates the button's own label to
- *        reflect the new state. If the audio subsystem never came up
- *        (no UCM config, or the mixer failed to open), this just relabels
- *        the button rather than pretending the toggle did anything --
- *        matches how the rest of this UI degrades visibly instead of
- *        silently when a piece of hardware isn't available.
+ * @brief Toggles the test tone and updates the UI button.
+ *
+ * @param e LVGL event pointer.
  */
 void audio_toggle_btn_event_cb(lv_event_t *e) {
     auto *audio = static_cast<Leticia::audio_manager *>(lv_event_get_user_data(e));
@@ -64,8 +63,9 @@ void audio_toggle_btn_event_cb(lv_event_t *e) {
 }
 
 /**
- * @brief Open the framebuffer device.
- * @return Newly created LVGL display, or nullptr on failure.
+ * @brief Opens the framebuffer display device.
+ *
+ * @return Pointer to the LVGL display or nullptr on failure.
  */
 lv_display_t *open_fbdev_display() {
     static const char *candidates[] = {
@@ -97,15 +97,17 @@ lv_display_t *open_fbdev_display() {
 }
 
 /**
- * @brief Attach the touchscreen input device.
- * @return Newly created LVGL input device, or nullptr if none was found.
+ * @brief Attaches the touchscreen input device.
+ *
+ * @param proto Updater protocol instance.
+ * @return Pointer to the LVGL input device or nullptr if not found.
  */
 lv_indev_t *open_touch_indev(Leticia::updater_proto &proto) {
     const char *env_override = getenv("TOUCH_DEVICE");
     if (env_override != nullptr)
         return lv_evdev_create(LV_INDEV_TYPE_POINTER, env_override);
 
-    auto path = Leticia::TouchProbe::find();
+    auto path = Leticia::touch_probe::find();
     if (!path) {
         proto.ui_print("No touchscreen node found, UI will be display only");
         return nullptr;
@@ -115,14 +117,21 @@ lv_indev_t *open_touch_indev(Leticia::updater_proto &proto) {
     return lv_evdev_create(LV_INDEV_TYPE_POINTER, path->c_str());
 }
 
+/**
+ * @brief Builds the user interface.
+ *
+ * @param disp LVGL display pointer.
+ * @param power Power manager instance.
+ * @param audio Audio manager instance.
+ */
 void build_ui(lv_display_t *disp, Leticia::power_manager &power, Leticia::audio_manager &audio) {
     int32_t hor_res = lv_display_get_horizontal_resolution(disp);
     int32_t ver_res = lv_display_get_vertical_resolution(disp);
 
-    int dpi = Leticia::UiScale::estimate_dpi(hor_res, ver_res);
+    int dpi = Leticia::ui_scale::estimate_dpi(hor_res, ver_res);
     lv_display_set_dpi(disp, dpi);
 
-    float scale = Leticia::UiScale::factor(dpi);
+    float scale = Leticia::ui_scale::factor(dpi);
 
     lv_obj_t *scr = lv_screen_active();
 
@@ -134,7 +143,7 @@ void build_ui(lv_display_t *disp, Leticia::power_manager &power, Leticia::audio_
 
     lv_obj_t *audio_btn_label = lv_label_create(audio_btn);
     lv_label_set_text(audio_btn_label, audio.is_available() ? "Play 1kHz Sine" : "Audio Unavailable");
-    lv_obj_set_style_text_font(audio_btn_label, Leticia::UiScale::pick_font(static_cast<int>(24 * scale)), 0);
+    lv_obj_set_style_text_font(audio_btn_label, Leticia::ui_scale::pick_font(static_cast<int>(24 * scale)), 0);
     lv_obj_center(audio_btn_label);
 
     lv_obj_t *btn = lv_button_create(scr);
@@ -145,7 +154,7 @@ void build_ui(lv_display_t *disp, Leticia::power_manager &power, Leticia::audio_
 
     lv_obj_t *btn_label = lv_label_create(btn);
     lv_label_set_text(btn_label, "Exit");
-    lv_obj_set_style_text_font(btn_label, Leticia::UiScale::pick_font(static_cast<int>(24 * scale)), 0);
+    lv_obj_set_style_text_font(btn_label, Leticia::ui_scale::pick_font(static_cast<int>(24 * scale)), 0);
     lv_obj_center(btn_label);
 
     lv_obj_add_event_cb(scr, user_activity_event_cb, LV_EVENT_ALL, &power);
@@ -156,12 +165,6 @@ void build_ui(lv_display_t *disp, Leticia::power_manager &power, Leticia::audio_
 int main(int argc, char *argv[]) {
     Leticia::updater_proto proto;
 
-    /* Recovery invokes us as `update-binary <api_version> <pipe_fd> <zip_path>`
-     * (standard edify convention) since this binary IS update-binary, not a
-     * script interpreter -- argv[3] is the path to the OTA zip on disk,
-     * which is also where a per-device config can travel (see
-     * device_config.hpp) so the same prebuilt binary works across devices
-     * without recompilation. */
     std::string zip_path;
     if (argc >= 4) {
         int pipe_fd = atoi(argv[2]);
@@ -198,7 +201,7 @@ int main(int argc, char *argv[]) {
     Leticia::audio_manager audio;
     if (audio.init(device_config, zip_path)) {
         proto.ui_print("Audio ready (output: %s)",
-                        audio.detected_output() == Leticia::audio_output::headphones ? "Headphones" : "Speaker");
+                       audio.detected_output() == Leticia::audio_output::headphones ? "Headphones" : "Speaker");
     } else {
         proto.ui_print("No UCM config found, audio test unavailable");
     }
@@ -212,12 +215,6 @@ int main(int argc, char *argv[]) {
     while (!g_should_exit) {
         uint32_t idle_ms = lv_timer_handler();
 
-        /* If we just woke from sleep, finish that transition here: forces
-         * a full redraw of the still-dark panel, then restores the
-         * backlight -- in that order, so nothing partial or stale is ever
-         * visible while lit. See power_manager::service_pending_wake().
-         * Safe here: we're at the top level, right after
-         * lv_timer_handler() and outside any LVGL callback. */
         power.service_pending_wake();
 
         if (idle_ms == LV_NO_TIMER_READY)

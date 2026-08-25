@@ -1,5 +1,5 @@
 #include "device_config.hpp"
-#include "updater_proto.hpp"
+#include "util/updater_proto.hpp"
 
 #include <cerrno>
 #include <csignal>
@@ -14,8 +14,8 @@ namespace Leticia {
 
 namespace {
 
-constexpr const char *kZipEntryName = "config/device.conf";
-constexpr const char *kAlsaZipEntryName = "config/alsa.conf";
+constexpr const char *kDeviceConfigName = "config/device.conf";
+constexpr const char *kAlsaUcmName = "config/alsa.conf";
 constexpr size_t kMaxDeviceConfigBytes = 64 * 1024;
 
 bool read_whole_file(const std::string &path, std::string &out) {
@@ -48,7 +48,6 @@ void parse_ini(const std::string &text, device_config_t &out) {
         std::string line = text.substr(pos, eol == std::string::npos ? std::string::npos : eol - pos);
         pos = (eol == std::string::npos) ? text.size() : eol + 1;
 
-        // Trim whitespace and CR.
         size_t start = line.find_first_not_of(" \t\r");
         if (start == std::string::npos)
             continue;
@@ -87,11 +86,14 @@ void parse_ini(const std::string &text, device_config_t &out) {
     }
 }
 
-// Runs `unzip -p <zip_path> <entry_name>` and captures stdout, i.e. the
-// decompressed entry contents (works whether the entry is STORED or
-// DEFLATEd -- unzip handles both transparently, unlike a hand-rolled
-// reader). Uses fork/exec with an argv array rather than popen(), so
-// zip_path/entry_name are never interpolated into a shell command line.
+/**
+ * @brief Extracts a file from a zip archive using unzip.
+ *
+ * @param zip_path Path to the zip file.
+ * @param entry_name Name of the file to extract.
+ * @param out String to store the extracted content.
+ * @return true if extracted successfully, false otherwise.
+ */
 bool run_unzip_extract(const std::string &zip_path, const char *entry_name, std::string &out) {
     int pipe_fd[2];
     if (pipe(pipe_fd) != 0) {
@@ -108,9 +110,6 @@ bool run_unzip_extract(const std::string &zip_path, const char *entry_name, std:
     }
 
     if (pid == 0) {
-        // Child: stdout -> pipe, stderr -> /dev/null (unzip is chatty
-        // about "caution: filename not matched" etc; we log our own
-        // diagnostic on failure instead).
         close(pipe_fd[0]);
         dup2(pipe_fd[1], STDOUT_FILENO);
         close(pipe_fd[1]);
@@ -122,10 +121,9 @@ bool run_unzip_extract(const std::string &zip_path, const char *entry_name, std:
         }
 
         execlp("unzip", "unzip", "-p", zip_path.c_str(), entry_name, static_cast<char *>(nullptr));
-        _exit(127); // exec failed (unzip not on PATH, etc)
+        _exit(127);
     }
 
-    // Parent.
     close(pipe_fd[1]);
 
     out.clear();
@@ -136,8 +134,6 @@ bool run_unzip_extract(const std::string &zip_path, const char *entry_name, std:
         if (out.size() > kMaxDeviceConfigBytes) {
             Leticia::ui_print("device_config: %s exceeds %zu bytes, aborting read", entry_name, kMaxDeviceConfigBytes);
             close(pipe_fd[0]);
-            // Drain and reap the child so it doesn't become a zombie, but
-            // don't block on it since it may still be writing.
             kill(pid, SIGTERM);
             waitpid(pid, nullptr, 0);
             return false;
@@ -161,9 +157,6 @@ bool run_unzip_extract(const std::string &zip_path, const char *entry_name, std:
         Leticia::ui_print("device_config: 'unzip' not found on PATH");
         return false;
     }
-    // unzip -p: 0 = success. 11 = "no matching files found" (entry not
-    // present -- normal case for a device with no embedded config).
-    // Anything else is treated as a real failure worth logging.
     if (exit_code != 0) {
         if (exit_code != 11)
             Leticia::ui_print("device_config: unzip exited with status %d", exit_code);
@@ -174,14 +167,17 @@ bool run_unzip_extract(const std::string &zip_path, const char *entry_name, std:
 }
 
 /**
- * @brief Shared 3-tier lookup used by both load_device_config() and
- * load_alsa_ucm_config_text(): env override, then a sibling file next to
- * the zip, then a zip-embedded entry. Returns raw text; parsing is the
- * caller's job, since the two config formats differ (plain key=value vs
- * ucm's INI-like grammar).
+ * @brief Resolves configuration text using multiple lookup tiers.
+ *
+ * @param zip_path Path to the OTA zip file.
+ * @param env_var Environment variable name for override.
+ * @param sibling_suffix Suffix for the sibling configuration file.
+ * @param zip_entry Entry name inside the zip file.
+ * @param log_label Label used for logging.
+ * @param out_text String to store the resolved text.
+ * @return true if resolved successfully, false otherwise.
  */
-bool resolve_config_text(const std::string &zip_path, const char *env_var, const std::string &sibling_suffix,
-                          const char *zip_entry, const char *log_label, std::string &out_text) {
+bool resolve_config_text(const std::string &zip_path, const char *env_var, const std::string &sibling_suffix, const char *zip_entry, const char *log_label, std::string &out_text) {
     const char *env_override = getenv(env_var);
     if (env_override != nullptr) {
         if (read_whole_file(env_override, out_text)) {
@@ -212,7 +208,7 @@ bool resolve_config_text(const std::string &zip_path, const char *env_var, const
 
 bool load_device_config(const std::string &zip_path, device_config_t &out) {
     std::string text;
-    if (!resolve_config_text(zip_path, "LETICIA_DEVICE_CONFIG", ".leticia.conf", kZipEntryName, "device config", text))
+    if (!resolve_config_text(zip_path, "LETICIA_DEVICE_CONFIG", ".leticia.conf", kDeviceConfigName, "device config", text))
         return false;
 
     parse_ini(text, out);
@@ -220,8 +216,7 @@ bool load_device_config(const std::string &zip_path, device_config_t &out) {
 }
 
 bool load_alsa_ucm_config_text(const std::string &zip_path, std::string &out_text) {
-    return resolve_config_text(zip_path, "LETICIA_ALSA_CONFIG", ".leticia.alsa.conf", kAlsaZipEntryName,
-                                "alsa ucm config", out_text);
+    return resolve_config_text(zip_path, "LETICIA_ALSA_CONFIG", ".leticia.alsa.conf", kAlsaUcmName, "alsa ucm config", out_text);
 }
 
 } // namespace Leticia

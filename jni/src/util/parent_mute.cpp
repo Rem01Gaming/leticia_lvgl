@@ -9,10 +9,6 @@ namespace Leticia {
 
 namespace {
 
-/* Signal handlers and atexit() only accept free functions, so the frozen
- * pid must live at namespace scope rather than as a member: there is only
- * ever one parent to unfreeze regardless of how many parent_mute objects
- * exist, and a crash handler has no object to call through anyway. */
 pid_t g_parent_pid = 0;
 volatile sig_atomic_t g_frozen = 0;
 

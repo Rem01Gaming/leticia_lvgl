@@ -3,7 +3,7 @@
 #include <array>
 #include <cstdlib>
 
-namespace Leticia::UiScale {
+namespace Leticia::ui_scale {
 
 namespace {
 constexpr int kBaselineDpi = 400;
@@ -62,4 +62,4 @@ const lv_font_t *pick_font(int target_px) {
     return best;
 }
 
-} // namespace Leticia::UiScale
+} // namespace Leticia::ui_scale
