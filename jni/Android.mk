@@ -3,8 +3,8 @@ LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 LOCAL_MODULE := update-binary
 
-LOCAL_SRC_FILES := $(wildcard $(LOCAL_PATH)/src/*.cpp)
-LOCAL_SRC_FILES := $(LOCAL_SRC_FILES:$(LOCAL_PATH)/%=%) $(LVGL_SRC_FILES)
+LOCAL_SRC_FILES := $(shell find $(LOCAL_PATH)/src -name "*.cpp")
+LOCAL_SRC_FILES := $(LOCAL_SRC_FILES:$(LOCAL_PATH)/%=%)
 
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/src
 
@@ -15,7 +15,7 @@ LOCAL_LDLIBS := -lm
 
 LOCAL_LDFLAGS += -static
 
-LOCAL_STATIC_LIBRARIES := lvgl
+LOCAL_STATIC_LIBRARIES := lvgl ModernAlsa
 
 include $(BUILD_EXECUTABLE)
 

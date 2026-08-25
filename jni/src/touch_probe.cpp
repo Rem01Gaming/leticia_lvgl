@@ -1,24 +1,22 @@
 #include "touch_probe.hpp"
 
+#include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/input.h>
 #include <sys/ioctl.h>
-#include <cstring>
 #include <unistd.h>
 
 namespace Leticia::TouchProbe {
 
 namespace {
 
-bool has_bit(const unsigned long *bitmask, int bit)
-{
+bool has_bit(const unsigned long *bitmask, int bit) {
     constexpr int bits_per_long = sizeof(unsigned long) * 8;
     return (bitmask[bit / bits_per_long] >> (bit % bits_per_long)) & 1;
 }
 
-bool node_is_touchscreen(int fd)
-{
+bool node_is_touchscreen(int fd) {
     unsigned long ev_bits[(EV_MAX / (sizeof(unsigned long) * 8)) + 1] = {0};
     unsigned long abs_bits[(ABS_MAX / (sizeof(unsigned long) * 8)) + 1] = {0};
 
@@ -36,8 +34,7 @@ bool node_is_touchscreen(int fd)
 
 } // namespace
 
-std::optional<std::string> find()
-{
+std::optional<std::string> find() {
     DIR *dir = opendir("/dev/input");
     if (dir == nullptr)
         return std::nullopt;

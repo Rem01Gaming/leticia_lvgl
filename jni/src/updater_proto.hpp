@@ -47,3 +47,11 @@ private:
 };
 
 } // namespace Leticia
+
+// Global helpers so non-main code can emit messages that reach recovery's
+// console when an updater_proto has been attached by main.
+namespace Leticia {
+void set_updater_proto(updater_proto *p);
+void clear_updater_proto();
+void ui_print(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+} // namespace Leticia

@@ -1,16 +1,18 @@
 #include "power_mgr.hpp"
+#include "updater_proto.hpp"
 
-#include <fcntl.h>
-#include <linux/fb.h>
-#include <sys/ioctl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
 #include <cerrno>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <dirent.h>
+#include <fcntl.h>
+#include <linux/fb.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace Leticia {
@@ -23,15 +25,13 @@ constexpr uint32_t kDimHoldMs = 5000;
 constexpr int kBrightnessFadeMs = 150;
 constexpr int kBrightnessFadeStepMs = 15;
 
-uint64_t now_ms()
-{
+uint64_t now_ms() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return static_cast<uint64_t>(ts.tv_sec) * 1000 + (ts.tv_nsec / 1000000);
 }
 
-bool led_name_looks_like_backlight(const char *name)
-{
+bool led_name_looks_like_backlight(const char *name) {
     static const char *hints[] = {"lcd-backlight", "lcd_backlight", "wled", "backlight"};
     for (const char *hint : hints) {
         if (strstr(name, hint) != nullptr)
@@ -42,13 +42,11 @@ bool led_name_looks_like_backlight(const char *name)
 
 } // namespace
 
-power_manager::~power_manager()
-{
+power_manager::~power_manager() {
     deinit();
 }
 
-bool power_manager::set_display_blank_sysfs(bool blank)
-{
+bool power_manager::set_display_blank_sysfs(bool blank) {
     static const char *sysfs_paths[] = {
         "/sys/class/graphics/fb0/blank",
         "/sys/class/graphics/fb1/blank",
@@ -63,15 +61,14 @@ bool power_manager::set_display_blank_sysfs(bool blank)
         ssize_t ret = write(fd, val, strlen(val));
         close(fd);
         if (ret > 0) {
-            fprintf(stderr, "sysfs blanking %s via %s\n", blank ? "OFF" : "ON", path);
+            Leticia::ui_print("sysfs blanking %s via %s", blank ? "OFF" : "ON", path);
             return true;
         }
     }
     return false;
 }
 
-bool power_manager::set_display_blank(bool blank)
-{
+bool power_manager::set_display_blank(bool blank) {
     if (!device_config_.screen_blank_supported) {
         // Unconfigured devices, and any device explicitly marked
         // screen_blank_supported=false, skip fb-level blanking entirely.
@@ -88,7 +85,7 @@ bool power_manager::set_display_blank(bool blank)
     if (fb_fd_ >= 0) {
         int blank_mode = blank ? FB_BLANK_POWERDOWN : FB_BLANK_UNBLANK;
         if (ioctl(fb_fd_, FBIOBLANK, blank_mode) == 0) {
-            fprintf(stderr, "ioctl blanking %s\n", blank ? "OFF" : "ON");
+            Leticia::ui_print("ioctl blanking %s", blank ? "OFF" : "ON");
             return true;
         }
         perror("ioctl(FBIOBLANK)");
@@ -97,7 +94,7 @@ bool power_manager::set_display_blank(bool blank)
     if (set_display_blank_sysfs(blank))
         return true;
 
-    fprintf(stderr, "All blanking methods failed\n");
+    Leticia::ui_print("All blanking methods failed");
     return false;
 }
 
@@ -112,8 +109,7 @@ bool power_manager::set_display_blank(bool blank)
  *        pipeline entirely (safe to call from inside the fade-complete
  *        callback, which itself can run from inside an LVGL timer tick).
  */
-void power_manager::blank_framebuffer_pixels()
-{
+void power_manager::blank_framebuffer_pixels() {
     if (fb_fd_ < 0)
         return;
 
@@ -151,11 +147,10 @@ void power_manager::blank_framebuffer_pixels()
     memset(mem, 0, screensize);
 
     munmap(mem, screensize);
-    fprintf(stderr, "Framebuffer pixels cleared to black (%zu bytes)\n", screensize);
+    Leticia::ui_print("Framebuffer pixels cleared to black (%zu bytes)", screensize);
 }
 
-bool power_manager::find_backlight()
-{
+bool power_manager::find_backlight() {
     if (device_config_.configured()) {
         int fd = open(device_config_.backlight_path.c_str(), O_WRONLY);
         if (fd < 0) {
@@ -164,11 +159,10 @@ bool power_manager::find_backlight()
             close(fd);
             backlight_path_ = device_config_.backlight_path;
             max_brightness_ = device_config_.max_brightness > 0 ? device_config_.max_brightness : 255;
-            fprintf(stderr, "Using configured backlight: %s (max %d)\n",
-                    backlight_path_.c_str(), max_brightness_);
+            Leticia::ui_print("Using configured backlight: %s (max %d)", backlight_path_.c_str(), max_brightness_);
             return true;
         }
-        fprintf(stderr, "Configured backlight_path unusable, falling back to auto-detect\n");
+        Leticia::ui_print("Configured backlight_path unusable, falling back to auto-detect");
     }
 
     // Auto-detect fallback for devices without a device.conf. Real panels
@@ -194,8 +188,8 @@ bool power_manager::find_backlight()
             if (is_led_dir && !led_name_looks_like_backlight(entry->d_name))
                 continue;
 
-            char max_path[160];
-            char brightness_path[160];
+            char max_path[PATH_MAX];
+            char brightness_path[PATH_MAX];
             snprintf(max_path, sizeof(max_path), "%s/%s/max_brightness", class_dir, entry->d_name);
             snprintf(brightness_path, sizeof(brightness_path), "%s/%s/brightness", class_dir, entry->d_name);
 
@@ -217,7 +211,7 @@ bool power_manager::find_backlight()
 
             backlight_path_ = brightness_path;
             max_brightness_ = max_val;
-            fprintf(stderr, "Using auto-detected backlight: %s (max %d)\n", brightness_path, max_val);
+            Leticia::ui_print("Using auto-detected backlight: %s (max %d)", brightness_path, max_val);
             closedir(dir);
             return true;
         }
@@ -228,8 +222,7 @@ bool power_manager::find_backlight()
     return false;
 }
 
-int power_manager::read_current_brightness_percent()
-{
+int power_manager::read_current_brightness_percent() {
     if (backlight_path_.empty())
         return brightness_percent_;
 
@@ -252,8 +245,7 @@ int power_manager::read_current_brightness_percent()
     return percent;
 }
 
-void power_manager::write_brightness_percent(int percent)
-{
+void power_manager::write_brightness_percent(int percent) {
     if (backlight_path_.empty())
         return;
 
@@ -281,8 +273,7 @@ void power_manager::write_brightness_percent(int percent)
     brightness_percent_ = percent;
 }
 
-void power_manager::fade_timer_trampoline(lv_timer_t *timer)
-{
+void power_manager::fade_timer_trampoline(lv_timer_t *timer) {
     auto *self = static_cast<power_manager *>(lv_timer_get_user_data(timer));
 
     uint64_t elapsed = now_ms() - self->fade_start_ms_;
@@ -304,8 +295,7 @@ void power_manager::fade_timer_trampoline(lv_timer_t *timer)
     self->write_brightness_percent(percent);
 }
 
-void power_manager::fade_brightness_to(int target_percent, std::function<void()> on_complete)
-{
+void power_manager::fade_brightness_to(int target_percent, std::function<void()> on_complete) {
     if (backlight_path_.empty()) {
         if (on_complete)
             on_complete();
@@ -333,16 +323,14 @@ void power_manager::fade_brightness_to(int target_percent, std::function<void()>
     fade_timer_ = lv_timer_create(fade_timer_trampoline, kBrightnessFadeStepMs, this);
 }
 
-void power_manager::cancel_dim_hold()
-{
+void power_manager::cancel_dim_hold() {
     if (dim_hold_timer_ != nullptr) {
         lv_timer_delete(dim_hold_timer_);
         dim_hold_timer_ = nullptr;
     }
 }
 
-void power_manager::dim_hold_timer_trampoline(lv_timer_t *timer)
-{
+void power_manager::dim_hold_timer_trampoline(lv_timer_t *timer) {
     auto *self = static_cast<power_manager *>(lv_timer_get_user_data(timer));
     self->dim_hold_timer_ = nullptr;
 
@@ -350,10 +338,9 @@ void power_manager::dim_hold_timer_trampoline(lv_timer_t *timer)
         self->set_state(power_state::sleep);
 }
 
-void power_manager::finish_sleep_after_fade()
-{
+void power_manager::finish_sleep_after_fade() {
     if (!set_display_blank(true))
-        fprintf(stderr, "Warning: fb blank request failed, continuing in backlight-off sleep\n");
+        Leticia::ui_print("Warning: fb blank request failed, continuing in backlight-off sleep");
 
     /* set_display_blank() is a no-op on most panels (screen_blank_supported
      * defaults to false -- see its comment), so the LCD's last frame is
@@ -365,11 +352,10 @@ void power_manager::finish_sleep_after_fade()
     blank_framebuffer_pixels();
 
     current_state_ = power_state::sleep;
-    fprintf(stderr, "Display turned OFF (sleep)\n");
+    Leticia::ui_print("Display turned OFF (sleep)");
 }
 
-void power_manager::set_touch_indev(lv_indev_t *indev)
-{
+void power_manager::set_touch_indev(lv_indev_t *indev) {
     touch_indev_ = indev;
 
     // Apply immediately so this is safe to call at any point, including
@@ -377,16 +363,14 @@ void power_manager::set_touch_indev(lv_indev_t *indev)
     set_touch_enabled(current_state_ != power_state::sleep);
 }
 
-void power_manager::set_touch_enabled(bool enabled)
-{
+void power_manager::set_touch_enabled(bool enabled) {
     if (touch_indev_ == nullptr)
         return;
 
     lv_indev_enable(touch_indev_, enabled);
 }
 
-void power_manager::on_input_event(const input_event_t &event)
-{
+void power_manager::on_input_event(const input_event_t &event) {
     if (!pwr_button_enabled_)
         return;
 
@@ -399,8 +383,7 @@ void power_manager::on_input_event(const input_event_t &event)
     }
 }
 
-void power_manager::activity_timer_trampoline(lv_timer_t *timer)
-{
+void power_manager::activity_timer_trampoline(lv_timer_t *timer) {
     auto *self = static_cast<power_manager *>(lv_timer_get_user_data(timer));
 
     if (!self->initialized_)
@@ -418,12 +401,10 @@ void power_manager::activity_timer_trampoline(lv_timer_t *timer)
         bool dim_enabled = self->dim_timeout_sec_ > 0 && self->dim_timeout_sec_ < self->sleep_timeout_sec_;
 
         if (dim_enabled && idle_sec >= self->dim_timeout_sec_) {
-            fprintf(stderr, "Auto-dim triggered after %lu seconds of inactivity\n",
-                    static_cast<unsigned long>(self->dim_timeout_sec_));
+            Leticia::ui_print("Auto-dim triggered after %lu seconds of inactivity", static_cast<unsigned long>(self->dim_timeout_sec_));
             self->set_state(power_state::dimmed);
         } else if (!dim_enabled && self->sleep_timeout_sec_ > 0 && idle_sec >= self->sleep_timeout_sec_) {
-            fprintf(stderr, "Auto-sleep triggered after %lu seconds of inactivity\n",
-                    static_cast<unsigned long>(self->sleep_timeout_sec_));
+            Leticia::ui_print("Auto-sleep triggered after %lu seconds of inactivity", static_cast<unsigned long>(self->sleep_timeout_sec_));
             self->set_state(power_state::sleep);
         }
     }
@@ -431,8 +412,7 @@ void power_manager::activity_timer_trampoline(lv_timer_t *timer)
      * fixed delay, independent of sleep_timeout_sec_. */
 }
 
-void power_manager::init(lv_display_t *disp, const device_config_t &config)
-{
+void power_manager::init(lv_display_t *disp, const device_config_t &config) {
     if (initialized_)
         return;
 
@@ -449,7 +429,7 @@ void power_manager::init(lv_display_t *disp, const device_config_t &config)
     if (find_backlight()) {
         write_brightness_percent(100);
     } else {
-        fprintf(stderr, "No controllable backlight found, sleep/dim will have no visible effect\n");
+        Leticia::ui_print("No controllable backlight found, sleep/dim will have no visible effect");
     }
 
     const char *fb_path = getenv("FB_DEVICE");
@@ -465,27 +445,27 @@ void power_manager::init(lv_display_t *disp, const device_config_t &config)
 
     fb_fd_ = open(fb_path_.c_str(), O_RDWR);
     if (fb_fd_ < 0) {
-        fprintf(stderr, "Warning: Could not open framebuffer %s for power control\n", fb_path_.c_str());
+        Leticia::ui_print("Warning: Could not open framebuffer %s for power control", fb_path_.c_str());
     } else {
-        fprintf(stderr, "Opened framebuffer %s for power control\n", fb_path_.c_str());
+        Leticia::ui_print("Opened framebuffer %s for power control", fb_path_.c_str());
     }
 
     if (input_monitor_.open()) {
-        input_monitor_.set_callback([this](const input_event_t &event) { on_input_event(event); });
+        input_monitor_.set_callback([this](const input_event_t &event) {
+            on_input_event(event);
+        });
     } else {
-        fprintf(stderr, "No power button found, button control disabled\n");
+        Leticia::ui_print("No power button found, button control disabled");
     }
 
     activity_timer_ = lv_timer_create(activity_timer_trampoline, 500, this);
 
     initialized_ = true;
 
-    fprintf(stderr, "Power management initialized (screen_blank_supported=%s)\n",
-            device_config_.screen_blank_supported ? "true" : "false");
+    Leticia::ui_print("Power management initialized (screen_blank_supported=%s)", device_config_.screen_blank_supported ? "true" : "false");
 }
 
-bool power_manager::set_state(power_state state)
-{
+bool power_manager::set_state(power_state state) {
     if (!initialized_)
         return false;
 
@@ -495,10 +475,10 @@ bool power_manager::set_state(power_state state)
     switch (state) {
         case power_state::on: {
             if (!set_display_blank(false))
-                fprintf(stderr, "Warning: fb unblank request failed, backlight restored anyway\n");
+                Leticia::ui_print("Warning: fb unblank request failed, backlight restored anyway");
 
             current_state_ = power_state::on;
-            fprintf(stderr, "Display turned ON\n");
+            Leticia::ui_print("Display turned ON");
             set_touch_enabled(true);
             cancel_dim_hold();
             if (fade_timer_ != nullptr) {
@@ -546,7 +526,7 @@ bool power_manager::set_state(power_state state)
              * enabled here -- dimmed is still "awake", just warning the
              * user before a real sleep. */
             current_state_ = power_state::dimmed;
-            fprintf(stderr, "Display DIMMED\n");
+            Leticia::ui_print("Display DIMMED");
             int current = read_current_brightness_percent();
             fade_brightness_to(current / 4);
             cancel_dim_hold();
@@ -573,11 +553,13 @@ bool power_manager::set_state(power_state state)
             /* Fade whatever backlight is left down to black, then blank the
              * panel (if this device supports it) only once that fade
              * completes, instead of cutting straight to off. */
-            fade_brightness_to(0, [this] { finish_sleep_after_fade(); });
+            fade_brightness_to(0, [this] {
+                finish_sleep_after_fade();
+            });
             return true;
 
         case power_state::deep_sleep:
-            fprintf(stderr, "Deep sleep not implemented\n");
+            Leticia::ui_print("Deep sleep not implemented");
             return false;
     }
 
@@ -590,13 +572,11 @@ bool power_manager::set_state(power_state state)
     return true;
 }
 
-power_state power_manager::get_state() const
-{
+power_state power_manager::get_state() const {
     return current_state_;
 }
 
-bool power_manager::service_pending_wake()
-{
+bool power_manager::service_pending_wake() {
     if (!pending_full_redraw_)
         return false;
 
@@ -619,8 +599,7 @@ bool power_manager::service_pending_wake()
     return true;
 }
 
-power_state power_manager::toggle_sleep()
-{
+power_state power_manager::toggle_sleep() {
     if (!initialized_)
         return current_state_;
 
@@ -633,31 +612,26 @@ power_state power_manager::toggle_sleep()
     return new_state;
 }
 
-void power_manager::set_dim_timeout(uint32_t timeout_seconds)
-{
+void power_manager::set_dim_timeout(uint32_t timeout_seconds) {
     dim_timeout_sec_ = timeout_seconds;
-    fprintf(stderr, "Dim timeout set to %u seconds\n", timeout_seconds);
+    Leticia::ui_print("Dim timeout set to %u seconds", timeout_seconds);
 }
 
-void power_manager::set_sleep_timeout(uint32_t timeout_seconds)
-{
+void power_manager::set_sleep_timeout(uint32_t timeout_seconds) {
     sleep_timeout_sec_ = timeout_seconds;
-    fprintf(stderr, "Sleep timeout set to %u seconds\n", timeout_seconds);
+    Leticia::ui_print("Sleep timeout set to %u seconds", timeout_seconds);
 }
 
-void power_manager::reset_activity_timer()
-{
+void power_manager::reset_activity_timer() {
     last_activity_time_ms_ = now_ms();
 }
 
-void power_manager::set_pwr_button_enabled(bool enabled)
-{
+void power_manager::set_pwr_button_enabled(bool enabled) {
     pwr_button_enabled_ = enabled;
-    fprintf(stderr, "Power button %s\n", enabled ? "enabled" : "disabled");
+    Leticia::ui_print("Power button %s", enabled ? "enabled" : "disabled");
 }
 
-void power_manager::deinit()
-{
+void power_manager::deinit() {
     if (!initialized_)
         return;
 
@@ -682,7 +656,7 @@ void power_manager::deinit()
     }
 
     initialized_ = false;
-    fprintf(stderr, "Power management deinitialized\n");
+    Leticia::ui_print("Power management deinitialized");
 }
 
 } // namespace Leticia

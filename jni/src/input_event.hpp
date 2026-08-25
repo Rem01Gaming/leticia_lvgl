@@ -78,6 +78,28 @@ public:
      */
     void poll();
 
+    /**
+     * @brief Current headphone jack state, valid as of open() plus any
+     *        events poll() has drained since. Unlike the event callback,
+     *        this reflects the jack's state at the moment open() ran (via
+     *        EVIOCGSW), not just transitions observed afterward -- so it
+     *        gives the right answer even if headphones were already
+     *        plugged in before this process started and no insert event
+     *        has fired since.
+     * @return true if headphones are connected, false if not connected OR
+     *         if no node reporting SW_HEADPHONE_INSERT was found at all;
+     *         check headphone_state_known() to distinguish those cases.
+     */
+    bool is_headphone_connected() const { return headphone_connected_; }
+
+    /**
+     * @brief Whether a node reporting SW_HEADPHONE_INSERT was found and its
+     *        state successfully read at open(). false means this device
+     *        has no jack-sense switch at all (or it couldn't be read), and
+     *        is_headphone_connected() should not be trusted.
+     */
+    bool headphone_state_known() const { return headphone_state_known_; }
+
 private:
     struct key_source {
         int fd = -1;
@@ -88,6 +110,8 @@ private:
     std::string usb_online_path_;
     bool usb_connected_ = false;
     bool usb_state_known_ = false;
+    bool headphone_connected_ = false;
+    bool headphone_state_known_ = false;
     input_event_cb_t callback_;
 
     void dispatch(input_event_type type) const;

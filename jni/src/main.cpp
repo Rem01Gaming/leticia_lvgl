@@ -6,6 +6,7 @@
 
 #include <lvgl.h>
 
+#include "audio/audio_manager.hpp"
 #include "device_config.hpp"
 #include "parent_mute.hpp"
 #include "power_mgr.hpp"
@@ -17,14 +18,12 @@ namespace {
 
 volatile sig_atomic_t g_should_exit = 0;
 
-void request_exit(int signum)
-{
+void request_exit(int signum) {
     (void)signum;
     g_should_exit = 1;
 }
 
-void exit_btn_event_cb(lv_event_t *e)
-{
+void exit_btn_event_cb(lv_event_t *e) {
     (void)e;
     g_should_exit = 1;
 }
@@ -32,8 +31,7 @@ void exit_btn_event_cb(lv_event_t *e)
 /**
  * @brief Callback for user interactions to reset activity timer and wake display if sleeping
  */
-void user_activity_event_cb(lv_event_t *e)
-{
+void user_activity_event_cb(lv_event_t *e) {
     auto *power = static_cast<Leticia::power_manager *>(lv_event_get_user_data(e));
 
     Leticia::power_state state = power->get_state();
@@ -44,11 +42,32 @@ void user_activity_event_cb(lv_event_t *e)
 }
 
 /**
+ * @brief Toggles the 1kHz test tone and updates the button's own label to
+ *        reflect the new state. If the audio subsystem never came up
+ *        (no UCM config, or the mixer failed to open), this just relabels
+ *        the button rather than pretending the toggle did anything --
+ *        matches how the rest of this UI degrades visibly instead of
+ *        silently when a piece of hardware isn't available.
+ */
+void audio_toggle_btn_event_cb(lv_event_t *e) {
+    auto *audio = static_cast<Leticia::audio_manager *>(lv_event_get_user_data(e));
+    auto *btn = static_cast<lv_obj_t *>(lv_event_get_target(e));
+    lv_obj_t *btn_label = lv_obj_get_child(btn, 0);
+
+    if (!audio->is_available()) {
+        lv_label_set_text(btn_label, "Audio Unavailable");
+        return;
+    }
+
+    bool playing = audio->toggle_test_tone();
+    lv_label_set_text(btn_label, playing ? "Stop 1kHz Sine" : "Play 1kHz Sine");
+}
+
+/**
  * @brief Open the framebuffer device.
  * @return Newly created LVGL display, or nullptr on failure.
  */
-lv_display_t *open_fbdev_display()
-{
+lv_display_t *open_fbdev_display() {
     static const char *candidates[] = {
         "/dev/graphics/fb0",
         "/dev/fb0",
@@ -81,8 +100,7 @@ lv_display_t *open_fbdev_display()
  * @brief Attach the touchscreen input device.
  * @return Newly created LVGL input device, or nullptr if none was found.
  */
-lv_indev_t *open_touch_indev(Leticia::updater_proto &proto)
-{
+lv_indev_t *open_touch_indev(Leticia::updater_proto &proto) {
     const char *env_override = getenv("TOUCH_DEVICE");
     if (env_override != nullptr)
         return lv_evdev_create(LV_INDEV_TYPE_POINTER, env_override);
@@ -97,8 +115,7 @@ lv_indev_t *open_touch_indev(Leticia::updater_proto &proto)
     return lv_evdev_create(LV_INDEV_TYPE_POINTER, path->c_str());
 }
 
-void build_ui(lv_display_t *disp, Leticia::power_manager &power)
-{
+void build_ui(lv_display_t *disp, Leticia::power_manager &power, Leticia::audio_manager &audio) {
     int32_t hor_res = lv_display_get_horizontal_resolution(disp);
     int32_t ver_res = lv_display_get_vertical_resolution(disp);
 
@@ -109,10 +126,16 @@ void build_ui(lv_display_t *disp, Leticia::power_manager &power)
 
     lv_obj_t *scr = lv_screen_active();
 
-    lv_obj_t *label = lv_label_create(scr);
-    lv_label_set_text(label, "Hello, World!");
-    lv_obj_set_style_text_font(label, Leticia::UiScale::pick_font(static_cast<int>(32 * scale)), 0);
-    lv_obj_align(label, LV_ALIGN_CENTER, 0, static_cast<int>(-60 * scale));
+    lv_obj_t *audio_btn = lv_button_create(scr);
+    lv_obj_set_size(audio_btn, static_cast<int>(260 * scale), static_cast<int>(90 * scale));
+    lv_obj_align(audio_btn, LV_ALIGN_CENTER, 0, static_cast<int>(-60 * scale));
+    lv_obj_add_event_cb(audio_btn, audio_toggle_btn_event_cb, LV_EVENT_CLICKED, &audio);
+    lv_obj_add_event_cb(audio_btn, user_activity_event_cb, LV_EVENT_ALL, &power);
+
+    lv_obj_t *audio_btn_label = lv_label_create(audio_btn);
+    lv_label_set_text(audio_btn_label, audio.is_available() ? "Play 1kHz Sine" : "Audio Unavailable");
+    lv_obj_set_style_text_font(audio_btn_label, Leticia::UiScale::pick_font(static_cast<int>(24 * scale)), 0);
+    lv_obj_center(audio_btn_label);
 
     lv_obj_t *btn = lv_button_create(scr);
     lv_obj_set_size(btn, static_cast<int>(220 * scale), static_cast<int>(90 * scale));
@@ -130,8 +153,7 @@ void build_ui(lv_display_t *disp, Leticia::power_manager &power)
 
 } // namespace
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     Leticia::updater_proto proto;
 
     /* Recovery invokes us as `update-binary <api_version> <pipe_fd> <zip_path>`
@@ -144,6 +166,7 @@ int main(int argc, char *argv[])
     if (argc >= 4) {
         int pipe_fd = atoi(argv[2]);
         proto.attach(pipe_fd);
+        Leticia::set_updater_proto(&proto);
         proto.ui_print("Launching Leticia UI");
         zip_path = argv[3];
     }
@@ -158,7 +181,7 @@ int main(int argc, char *argv[])
 
     lv_display_t *disp = open_fbdev_display();
     if (disp == nullptr) {
-        fprintf(stderr, "error: could not open a framebuffer device\n");
+        Leticia::ui_print("error: could not open a framebuffer device");
         proto.ui_print("error: could not open a framebuffer device");
         return 1;
     }
@@ -172,8 +195,16 @@ int main(int argc, char *argv[])
         proto.ui_print("No device config found, using auto-detection");
     }
 
+    Leticia::audio_manager audio;
+    if (audio.init(device_config, zip_path)) {
+        proto.ui_print("Audio ready (output: %s)",
+                        audio.detected_output() == Leticia::audio_output::headphones ? "Headphones" : "Speaker");
+    } else {
+        proto.ui_print("No UCM config found, audio test unavailable");
+    }
+
     Leticia::power_manager power;
-    build_ui(disp, power);
+    build_ui(disp, power, audio);
 
     power.init(disp, device_config);
     power.set_touch_indev(indev);
@@ -195,6 +226,7 @@ int main(int argc, char *argv[])
     }
 
     power.deinit();
+    audio.deinit();
 
     if (indev != nullptr)
         lv_evdev_delete(indev);
@@ -204,6 +236,7 @@ int main(int argc, char *argv[])
     mute.resume();
 
     proto.ui_print("Leticia UI closed, returning to recovery");
+    Leticia::clear_updater_proto();
     proto.close();
 
     return 0;

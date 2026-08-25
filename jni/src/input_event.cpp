@@ -1,13 +1,15 @@
 #include "input_event.hpp"
+#include "updater_proto.hpp"
 
+#include <cerrno>
+#include <climits>
+#include <cstdio>
+#include <cstring>
+#include <ctime>
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/input.h>
 #include <sys/ioctl.h>
-#include <cerrno>
-#include <cstdio>
-#include <cstring>
-#include <ctime>
 #include <unistd.h>
 
 namespace Leticia {
@@ -17,28 +19,45 @@ namespace {
 constexpr const char *kInputDir = "/dev/input";
 constexpr const char *kPowerSupplyDir = "/sys/class/power_supply";
 
-uint64_t now_ms()
-{
+uint64_t now_ms() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return static_cast<uint64_t>(ts.tv_sec) * 1000 + (ts.tv_nsec / 1000000);
 }
 
-bool test_bit(unsigned int bit, const unsigned long *bitmask)
-{
+bool test_bit(unsigned int bit, const unsigned long *bitmask) {
     constexpr unsigned int bits_per_long = sizeof(unsigned long) * 8;
     return (bitmask[bit / bits_per_long] >> (bit % bits_per_long)) & 1;
 }
 
+/**
+ * @brief If @p fd reports SW_HEADPHONE_INSERT, reads its current switch
+ * state via EVIOCGSW (not just capability). Distinct from
+ * node_reports_watched_bits(), which only tests capability, not value.
+ * @return true if the switch state was successfully read into *connected.
+ */
+bool try_read_headphone_switch_state(int fd, bool *connected) {
+    unsigned long sw_cap_bits[(SW_MAX / (sizeof(unsigned long) * 8)) + 1] = {0};
+    if (ioctl(fd, EVIOCGBIT(EV_SW, sizeof(sw_cap_bits)), sw_cap_bits) < 0)
+        return false;
+    if (!test_bit(SW_HEADPHONE_INSERT, sw_cap_bits))
+        return false;
+
+    unsigned long sw_state_bits[(SW_MAX / (sizeof(unsigned long) * 8)) + 1] = {0};
+    if (ioctl(fd, EVIOCGSW(sizeof(sw_state_bits)), sw_state_bits) < 0)
+        return false;
+
+    *connected = test_bit(SW_HEADPHONE_INSERT, sw_state_bits);
+    return true;
+}
+
 } // namespace
 
-input_event_monitor::~input_event_monitor()
-{
+input_event_monitor::~input_event_monitor() {
     close();
 }
 
-bool input_event_monitor::node_reports_watched_bits(int fd)
-{
+bool input_event_monitor::node_reports_watched_bits(int fd) {
     unsigned long ev_bits[(EV_MAX / (sizeof(unsigned long) * 8)) + 1] = {0};
     if (ioctl(fd, EVIOCGBIT(0, sizeof(ev_bits)), ev_bits) < 0)
         return false;
@@ -63,8 +82,7 @@ bool input_event_monitor::node_reports_watched_bits(int fd)
     return false;
 }
 
-bool input_event_monitor::find_usb_online_node(std::string &out_path)
-{
+bool input_event_monitor::find_usb_online_node(std::string &out_path) {
     DIR *dir = opendir(kPowerSupplyDir);
     if (dir == nullptr)
         return false;
@@ -75,7 +93,7 @@ bool input_event_monitor::find_usb_online_node(std::string &out_path)
         if (entry->d_name[0] == '.')
             continue;
 
-        char type_path[256];
+        char type_path[PATH_MAX];
         snprintf(type_path, sizeof(type_path), "%s/%s/type", kPowerSupplyDir, entry->d_name);
 
         FILE *f = fopen(type_path, "r");
@@ -89,7 +107,7 @@ bool input_event_monitor::find_usb_online_node(std::string &out_path)
         if (!is_usb)
             continue;
 
-        char online_path[256];
+        char online_path[PATH_MAX];
         snprintf(online_path, sizeof(online_path), "%s/%s/online", kPowerSupplyDir, entry->d_name);
         if (access(online_path, R_OK) != 0)
             continue;
@@ -103,8 +121,7 @@ bool input_event_monitor::find_usb_online_node(std::string &out_path)
     return found;
 }
 
-bool input_event_monitor::open()
-{
+bool input_event_monitor::open() {
     close();
 
     DIR *dir = opendir(kInputDir);
@@ -123,7 +140,23 @@ bool input_event_monitor::open()
 
             if (node_reports_watched_bits(fd)) {
                 key_sources_.push_back({fd, path});
-                fprintf(stderr, "input_event_monitor: watching %s\n", path);
+                Leticia::ui_print("input_event_monitor: watching %s", path);
+
+                // Read the jack's CURRENT state now, not just its future
+                // transitions -- otherwise headphones already plugged in
+                // before this process started would go undetected until
+                // an unplug/replug produces a fresh SW_HEADPHONE_INSERT
+                // event. First node that answers wins; only one should
+                // ever report this switch on a normal board.
+                if (!headphone_state_known_) {
+                    bool connected = false;
+                    if (try_read_headphone_switch_state(fd, &connected)) {
+                        headphone_connected_ = connected;
+                        headphone_state_known_ = true;
+                        Leticia::ui_print("input_event_monitor: initial headphone state: %s",
+                                          connected ? "connected" : "not connected");
+                    }
+                }
             } else {
                 ::close(fd);
             }
@@ -132,13 +165,12 @@ bool input_event_monitor::open()
     }
 
     if (find_usb_online_node(usb_online_path_))
-        fprintf(stderr, "input_event_monitor: watching %s\n", usb_online_path_.c_str());
+        Leticia::ui_print("input_event_monitor: watching %s", usb_online_path_.c_str());
 
     return !key_sources_.empty() || !usb_online_path_.empty();
 }
 
-void input_event_monitor::close()
-{
+void input_event_monitor::close() {
     for (auto &source : key_sources_) {
         if (source.fd >= 0)
             ::close(source.fd);
@@ -148,21 +180,20 @@ void input_event_monitor::close()
     usb_online_path_.clear();
     usb_connected_ = false;
     usb_state_known_ = false;
+    headphone_connected_ = false;
+    headphone_state_known_ = false;
 }
 
-void input_event_monitor::set_callback(input_event_cb_t callback)
-{
+void input_event_monitor::set_callback(input_event_cb_t callback) {
     callback_ = std::move(callback);
 }
 
-void input_event_monitor::dispatch(input_event_type type) const
-{
+void input_event_monitor::dispatch(input_event_type type) const {
     if (callback_)
         callback_(input_event_t{type, now_ms()});
 }
 
-void input_event_monitor::poll_key_source(int fd)
-{
+void input_event_monitor::poll_key_source(int fd) {
     struct input_event ev;
     ssize_t n;
 
@@ -182,8 +213,9 @@ void input_event_monitor::poll_key_source(int fd)
                     break;
             }
         } else if (ev.type == EV_SW && ev.code == SW_HEADPHONE_INSERT) {
-            dispatch(ev.value != 0 ? input_event_type::headphone_insert
-                                    : input_event_type::headphone_remove);
+            headphone_connected_ = ev.value != 0;
+            headphone_state_known_ = true;
+            dispatch(headphone_connected_ ? input_event_type::headphone_insert : input_event_type::headphone_remove);
         }
     }
 
@@ -191,8 +223,7 @@ void input_event_monitor::poll_key_source(int fd)
         perror("input_event_monitor: read");
 }
 
-void input_event_monitor::poll_usb()
-{
+void input_event_monitor::poll_usb() {
     if (usb_online_path_.empty())
         return;
 
@@ -214,8 +245,7 @@ void input_event_monitor::poll_usb()
     }
 }
 
-void input_event_monitor::poll()
-{
+void input_event_monitor::poll() {
     for (auto &source : key_sources_)
         poll_key_source(source.fd);
 

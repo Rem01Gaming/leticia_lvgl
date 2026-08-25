@@ -1,23 +1,24 @@
 #include "device_config.hpp"
+#include "updater_proto.hpp"
 
-#include <fcntl.h>
-#include <sys/wait.h>
-#include <unistd.h>
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 namespace Leticia {
 
 namespace {
 
 constexpr const char *kZipEntryName = "config/device.conf";
+constexpr const char *kAlsaZipEntryName = "config/alsa.conf";
 constexpr size_t kMaxDeviceConfigBytes = 64 * 1024;
 
-bool read_whole_file(const std::string &path, std::string &out)
-{
+bool read_whole_file(const std::string &path, std::string &out) {
     FILE *f = fopen(path.c_str(), "rb");
     if (f == nullptr)
         return false;
@@ -40,8 +41,7 @@ bool read_whole_file(const std::string &path, std::string &out)
     return read == static_cast<size_t>(size);
 }
 
-void parse_ini(const std::string &text, device_config_t &out)
-{
+void parse_ini(const std::string &text, device_config_t &out) {
     size_t pos = 0;
     while (pos < text.size()) {
         size_t eol = text.find('\n', pos);
@@ -81,6 +81,8 @@ void parse_ini(const std::string &text, device_config_t &out)
             out.max_brightness = atoi(val.c_str());
         } else if (key == "screen_blank_supported") {
             out.screen_blank_supported = (val == "1" || val == "true" || val == "yes");
+        } else if (key == "alsa_card") {
+            out.alsa_card = static_cast<unsigned int>(atoi(val.c_str()));
         }
     }
 }
@@ -90,8 +92,7 @@ void parse_ini(const std::string &text, device_config_t &out)
 // DEFLATEd -- unzip handles both transparently, unlike a hand-rolled
 // reader). Uses fork/exec with an argv array rather than popen(), so
 // zip_path/entry_name are never interpolated into a shell command line.
-bool run_unzip_extract(const std::string &zip_path, const char *entry_name, std::string &out)
-{
+bool run_unzip_extract(const std::string &zip_path, const char *entry_name, std::string &out) {
     int pipe_fd[2];
     if (pipe(pipe_fd) != 0) {
         perror("device_config: pipe");
@@ -133,7 +134,7 @@ bool run_unzip_extract(const std::string &zip_path, const char *entry_name, std:
     while ((n = read(pipe_fd[0], buf, sizeof(buf))) > 0) {
         out.append(buf, static_cast<size_t>(n));
         if (out.size() > kMaxDeviceConfigBytes) {
-            fprintf(stderr, "device_config: %s exceeds %zu bytes, aborting read\n", entry_name, kMaxDeviceConfigBytes);
+            Leticia::ui_print("device_config: %s exceeds %zu bytes, aborting read", entry_name, kMaxDeviceConfigBytes);
             close(pipe_fd[0]);
             // Drain and reap the child so it doesn't become a zombie, but
             // don't block on it since it may still be writing.
@@ -151,13 +152,13 @@ bool run_unzip_extract(const std::string &zip_path, const char *entry_name, std:
     }
 
     if (!WIFEXITED(status)) {
-        fprintf(stderr, "device_config: unzip terminated abnormally\n");
+        Leticia::ui_print("device_config: unzip terminated abnormally");
         return false;
     }
 
     int exit_code = WEXITSTATUS(status);
     if (exit_code == 127) {
-        fprintf(stderr, "device_config: 'unzip' not found on PATH\n");
+        Leticia::ui_print("device_config: 'unzip' not found on PATH");
         return false;
     }
     // unzip -p: 0 = success. 11 = "no matching files found" (entry not
@@ -165,58 +166,62 @@ bool run_unzip_extract(const std::string &zip_path, const char *entry_name, std:
     // Anything else is treated as a real failure worth logging.
     if (exit_code != 0) {
         if (exit_code != 11)
-            fprintf(stderr, "device_config: unzip exited with status %d\n", exit_code);
+            Leticia::ui_print("device_config: unzip exited with status %d", exit_code);
         return false;
     }
 
     return !out.empty();
 }
 
-} // namespace
-
-bool load_device_config(const std::string &zip_path, device_config_t &out)
-{
-    // 1. Explicit override, for development/testing without touching the zip.
-    const char *env_override = getenv("LETICIA_DEVICE_CONFIG");
+/**
+ * @brief Shared 3-tier lookup used by both load_device_config() and
+ * load_alsa_ucm_config_text(): env override, then a sibling file next to
+ * the zip, then a zip-embedded entry. Returns raw text; parsing is the
+ * caller's job, since the two config formats differ (plain key=value vs
+ * ucm's INI-like grammar).
+ */
+bool resolve_config_text(const std::string &zip_path, const char *env_var, const std::string &sibling_suffix,
+                          const char *zip_entry, const char *log_label, std::string &out_text) {
+    const char *env_override = getenv(env_var);
     if (env_override != nullptr) {
-        std::string text;
-        if (read_whole_file(env_override, text)) {
-            parse_ini(text, out);
-            fprintf(stderr, "device_config: loaded from %s\n", env_override);
+        if (read_whole_file(env_override, out_text)) {
+            Leticia::ui_print("device_config: %s loaded from %s", log_label, env_override);
             return true;
         }
-        fprintf(stderr, "device_config: LETICIA_DEVICE_CONFIG=%s set but unreadable\n", env_override);
+        Leticia::ui_print("device_config: %s=%s set but unreadable", env_var, env_override);
     }
 
     if (zip_path.empty())
         return false;
 
-    // 2. Plain sibling file next to the zip -- easiest to hand-edit or drop
-    //    onto a device without repacking anything.
-    std::string sibling_path = zip_path + ".leticia.conf";
-    {
-        std::string text;
-        if (read_whole_file(sibling_path, text)) {
-            parse_ini(text, out);
-            fprintf(stderr, "device_config: loaded from %s\n", sibling_path.c_str());
-            return true;
-        }
+    std::string sibling_path = zip_path + sibling_suffix;
+    if (read_whole_file(sibling_path, out_text)) {
+        Leticia::ui_print("device_config: %s loaded from %s", log_label, sibling_path.c_str());
+        return true;
     }
 
-    // 3. Entry embedded inside the zip itself, extracted via the `unzip`
-    //    binary -- the actual per-device, no-recompile mechanism: a new
-    //    device just ships its own zip with a different leticia/device.conf
-    //    packed in (compressed or stored, either is fine).
-    {
-        std::string text;
-        if (run_unzip_extract(zip_path, kZipEntryName, text)) {
-            parse_ini(text, out);
-            fprintf(stderr, "device_config: loaded from %s inside %s\n", kZipEntryName, zip_path.c_str());
-            return true;
-        }
+    if (run_unzip_extract(zip_path, zip_entry, out_text)) {
+        Leticia::ui_print("device_config: %s loaded from %s inside %s", log_label, zip_entry, zip_path.c_str());
+        return true;
     }
 
     return false;
+}
+
+} // namespace
+
+bool load_device_config(const std::string &zip_path, device_config_t &out) {
+    std::string text;
+    if (!resolve_config_text(zip_path, "LETICIA_DEVICE_CONFIG", ".leticia.conf", kZipEntryName, "device config", text))
+        return false;
+
+    parse_ini(text, out);
+    return true;
+}
+
+bool load_alsa_ucm_config_text(const std::string &zip_path, std::string &out_text) {
+    return resolve_config_text(zip_path, "LETICIA_ALSA_CONFIG", ".leticia.alsa.conf", kAlsaZipEntryName,
+                                "alsa ucm config", out_text);
 }
 
 } // namespace Leticia

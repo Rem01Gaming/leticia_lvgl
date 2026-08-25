@@ -16,8 +16,7 @@ namespace {
 pid_t g_parent_pid = 0;
 volatile sig_atomic_t g_frozen = 0;
 
-void do_resume()
-{
+void do_resume() {
     if (!g_frozen)
         return;
 
@@ -26,8 +25,7 @@ void do_resume()
         kill(g_parent_pid, SIGCONT);
 }
 
-void resume_and_reraise(int signum)
-{
+void resume_and_reraise(int signum) {
     do_resume();
     signal(signum, SIG_DFL);
     raise(signum);
@@ -35,13 +33,11 @@ void resume_and_reraise(int signum)
 
 } // namespace
 
-parent_mute::~parent_mute()
-{
+parent_mute::~parent_mute() {
     resume();
 }
 
-void parent_mute::freeze()
-{
+void parent_mute::freeze() {
     g_parent_pid = getppid();
     if (g_parent_pid <= 0)
         return;
@@ -57,8 +53,7 @@ void parent_mute::freeze()
     g_frozen = 1;
 }
 
-void parent_mute::resume()
-{
+void parent_mute::resume() {
     do_resume();
 }
 
