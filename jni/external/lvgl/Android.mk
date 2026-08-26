@@ -13,6 +13,6 @@ LOCAL_C_INCLUDES := $(ROOT_PATH)/include
 
 LOCAL_EXPORT_C_INCLUDES := $(LOCAL_PATH)
 
-LOCAL_CFLAGS += -O2 -Wall -Wextra -std=gnu11
+LOCAL_CFLAGS += -O3 -Wall -Wextra -std=gnu11
 
 include $(BUILD_STATIC_LIBRARY)
