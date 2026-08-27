@@ -11,11 +11,11 @@ LOCAL_C_INCLUDES := $(LOCAL_PATH)/src
 LOCAL_CPPFLAGS := -std=c++23 -O3 -fno-exceptions -fno-rtti
 LOCAL_CPPFLAGS := -Wpedantic -Wall -Wextra -Werror -Wformat -Wuninitialized
 
-LOCAL_LDLIBS := -lm
+LOCAL_LDLIBS := -lz -lm
 
 LOCAL_LDFLAGS += -static
 
-LOCAL_STATIC_LIBRARIES := lvgl ModernAlsa
+LOCAL_STATIC_LIBRARIES := lvgl ModernAlsa avformat avcodec swscale swresample avutil
 
 include $(BUILD_EXECUTABLE)
 
