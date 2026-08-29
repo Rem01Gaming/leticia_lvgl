@@ -113,6 +113,8 @@ private:
     uint32_t dim_timeout_sec_ = 0;
     uint64_t last_activity_time_ms_ = 0;
     bool pwr_button_enabled_ = true;
+    bool power_pressed_ = false;
+    uint64_t power_press_start_ms_ = 0;
     bool initialized_ = false;
     bool pending_full_redraw_ = false;
     lv_timer_t *activity_timer_ = nullptr;

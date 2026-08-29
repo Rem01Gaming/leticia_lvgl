@@ -342,9 +342,22 @@ void power_manager::on_input_event(const input_event_t &event) {
     if (!pwr_button_enabled_)
         return;
 
-    if (event.type == input_event_type::power_button) {
-        toggle_sleep();
+    // Sleep only toggles on a short press
+    if (event.type == input_event_type::power_button_press) {
+        power_pressed_ = true;
+        power_press_start_ms_ = event.timestamp_ms;
         reset_activity_timer();
+    } else if (event.type == input_event_type::power_button_release) {
+        if (!power_pressed_)
+            return;
+
+        uint64_t held_ms = event.timestamp_ms - power_press_start_ms_;
+        power_pressed_ = false;
+
+        if (held_ms < 600) {
+            toggle_sleep();
+            reset_activity_timer();
+        }
     }
 }
 
@@ -385,6 +398,7 @@ void power_manager::init(lv_display_t *disp, const device_config_t &config) {
     sleep_timeout_sec_ = kDefaultSleepTimeoutSec;
     dim_timeout_sec_ = kDefaultDimTimeoutSec;
     pwr_button_enabled_ = true;
+    power_pressed_ = false;
     last_activity_time_ms_ = now_ms();
     brightness_percent_ = 100;
     max_brightness_ = 255;

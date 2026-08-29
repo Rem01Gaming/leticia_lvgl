@@ -1,3 +1,4 @@
+#include <atomic>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +10,7 @@
 #include "audio/audio_manager.hpp"
 #include "config/device_config.hpp"
 #include "gui/ui_scale.hpp"
+#include "input/safety_exit.hpp"
 #include "input/touch_probe.hpp"
 #include "power/power_manager.hpp"
 #include "util/parent_mute.hpp"
@@ -16,16 +18,26 @@
 
 namespace {
 
-volatile sig_atomic_t g_should_exit = 0;
+std::atomic<bool> g_should_exit{false};
 
 void request_exit(int signum) {
     (void)signum;
-    g_should_exit = 1;
+    g_should_exit.store(true, std::memory_order_relaxed);
 }
 
 void exit_btn_event_cb(lv_event_t *e) {
     (void)e;
-    g_should_exit = 1;
+    g_should_exit.store(true, std::memory_order_relaxed);
+}
+
+/**
+ * @brief Requests an exit from the safety exit watchdog thread.
+ *
+ * Runs on the watchdog thread, not the LVGL main thread, so it must stay lock-free.
+ */
+void safety_exit_cb() {
+    Leticia::ui_print("Safety exit long-press triggered, closing UI");
+    g_should_exit.store(true, std::memory_order_relaxed);
 }
 
 /**
@@ -210,7 +222,10 @@ int main(int argc, char *argv[]) {
     power.init(disp, device_config);
     power.set_touch_indev(indev);
 
-    while (!g_should_exit) {
+    Leticia::safety_exit_monitor safety_exit;
+    safety_exit.start(safety_exit_cb);
+
+    while (!g_should_exit.load(std::memory_order_relaxed)) {
         uint32_t idle_ms = lv_timer_handler();
 
         power.service_pending_wake();
@@ -219,6 +234,8 @@ int main(int argc, char *argv[]) {
             idle_ms = 50;
         usleep(idle_ms * 1000);
     }
+
+    safety_exit.stop();
 
     power.deinit();
     audio.deinit();

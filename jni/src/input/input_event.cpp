@@ -1,4 +1,5 @@
 #include "input_event.hpp"
+#include "evdev_probe.hpp"
 #include "util/updater_proto.hpp"
 
 #include <cerrno>
@@ -25,26 +26,18 @@ uint64_t now_ms() {
     return static_cast<uint64_t>(ts.tv_sec) * 1000 + (ts.tv_nsec / 1000000);
 }
 
-bool test_bit(unsigned int bit, const unsigned long *bitmask) {
-    constexpr unsigned int bits_per_long = sizeof(unsigned long) * 8;
-    return (bitmask[bit / bits_per_long] >> (bit % bits_per_long)) & 1;
-}
-
 /**
  * @brief Reads the current state of a headphone switch.
  */
 bool try_read_headphone_switch_state(int fd, bool *connected) {
-    unsigned long sw_cap_bits[(SW_MAX / (sizeof(unsigned long) * 8)) + 1] = {0};
-    if (ioctl(fd, EVIOCGBIT(EV_SW, sizeof(sw_cap_bits)), sw_cap_bits) < 0)
-        return false;
-    if (!test_bit(SW_HEADPHONE_INSERT, sw_cap_bits))
+    if (!evdev_probe::has_switch(fd, SW_HEADPHONE_INSERT))
         return false;
 
     unsigned long sw_state_bits[(SW_MAX / (sizeof(unsigned long) * 8)) + 1] = {0};
     if (ioctl(fd, EVIOCGSW(sizeof(sw_state_bits)), sw_state_bits) < 0)
         return false;
 
-    *connected = test_bit(SW_HEADPHONE_INSERT, sw_state_bits);
+    *connected = evdev_probe::has_bit(sw_state_bits, SW_HEADPHONE_INSERT);
     return true;
 }
 
@@ -55,28 +48,8 @@ input_event_monitor::~input_event_monitor() {
 }
 
 bool input_event_monitor::node_reports_watched_bits(int fd) {
-    unsigned long ev_bits[(EV_MAX / (sizeof(unsigned long) * 8)) + 1] = {0};
-    if (ioctl(fd, EVIOCGBIT(0, sizeof(ev_bits)), ev_bits) < 0)
-        return false;
-
-    if (test_bit(EV_KEY, ev_bits)) {
-        unsigned long key_bits[(KEY_MAX / (sizeof(unsigned long) * 8)) + 1] = {0};
-        if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(key_bits)), key_bits) >= 0) {
-            if (test_bit(KEY_POWER, key_bits) || test_bit(KEY_VOLUMEUP, key_bits) ||
-                test_bit(KEY_VOLUMEDOWN, key_bits))
-                return true;
-        }
-    }
-
-    if (test_bit(EV_SW, ev_bits)) {
-        unsigned long sw_bits[(SW_MAX / (sizeof(unsigned long) * 8)) + 1] = {0};
-        if (ioctl(fd, EVIOCGBIT(EV_SW, sizeof(sw_bits)), sw_bits) >= 0) {
-            if (test_bit(SW_HEADPHONE_INSERT, sw_bits))
-                return true;
-        }
-    }
-
-    return false;
+    return evdev_probe::has_key(fd, KEY_POWER) || evdev_probe::has_key(fd, KEY_VOLUMEUP) ||
+           evdev_probe::has_key(fd, KEY_VOLUMEDOWN) || evdev_probe::has_switch(fd, SW_HEADPHONE_INSERT);
 }
 
 bool input_event_monitor::find_usb_online_node(std::string &out_path) {
@@ -189,16 +162,25 @@ void input_event_monitor::poll_key_source(int fd) {
     ssize_t n;
 
     while ((n = read(fd, &ev, sizeof(ev))) == sizeof(ev)) {
-        if (ev.type == EV_KEY && ev.value == 1) {
+        if (ev.type == EV_KEY) {
             switch (ev.code) {
                 case KEY_POWER:
-                    dispatch(input_event_type::power_button);
+                    if (ev.value == 1)
+                        dispatch(input_event_type::power_button_press);
+                    else if (ev.value == 0)
+                        dispatch(input_event_type::power_button_release);
                     break;
                 case KEY_VOLUMEUP:
-                    dispatch(input_event_type::volume_up);
+                    if (ev.value == 1)
+                        dispatch(input_event_type::volume_up_press);
+                    else if (ev.value == 0)
+                        dispatch(input_event_type::volume_up_release);
                     break;
                 case KEY_VOLUMEDOWN:
-                    dispatch(input_event_type::volume_down);
+                    if (ev.value == 1)
+                        dispatch(input_event_type::volume_down_press);
+                    else if (ev.value == 0)
+                        dispatch(input_event_type::volume_down_release);
                     break;
                 default:
                     break;
@@ -206,12 +188,14 @@ void input_event_monitor::poll_key_source(int fd) {
         } else if (ev.type == EV_SW && ev.code == SW_HEADPHONE_INSERT) {
             headphone_connected_ = ev.value != 0;
             headphone_state_known_ = true;
-            dispatch(headphone_connected_ ? input_event_type::headphone_insert : input_event_type::headphone_remove);
+            dispatch(headphone_connected_ ? input_event_type::headphone_insert
+                                          : input_event_type::headphone_remove);
         }
     }
 
-    if (n < 0 && errno != EAGAIN)
+    if (n < 0 && errno != EAGAIN){
         perror("input_event_monitor: read");
+    }
 }
 
 void input_event_monitor::poll_usb() {

@@ -11,9 +11,12 @@
 namespace Leticia {
 
 enum class input_event_type {
-    power_button,
-    volume_up,
-    volume_down,
+    power_button_press,
+    power_button_release,
+    volume_up_press,
+    volume_up_release,
+    volume_down_press,
+    volume_down_release,
     headphone_insert,
     headphone_remove,
     usb_connected,
