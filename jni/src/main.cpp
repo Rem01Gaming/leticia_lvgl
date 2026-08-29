@@ -99,21 +99,20 @@ lv_display_t *open_fbdev_display() {
 /**
  * @brief Attaches the touchscreen input device.
  *
- * @param proto Updater protocol instance.
  * @return Pointer to the LVGL input device or nullptr if not found.
  */
-lv_indev_t *open_touch_indev(Leticia::updater_proto &proto) {
+lv_indev_t *open_touch_indev() {
     const char *env_override = getenv("TOUCH_DEVICE");
     if (env_override != nullptr)
         return lv_evdev_create(LV_INDEV_TYPE_POINTER, env_override);
 
     auto path = Leticia::touch_probe::find();
     if (!path) {
-        proto.ui_print("No touchscreen node found, UI will be display only");
+        Leticia::ui_print("No touchscreen node found, UI will be display only");
         return nullptr;
     }
 
-    proto.ui_print("Using touch input: %s", path->c_str());
+    Leticia::ui_print("Using touch input: %s", path->c_str());
     return lv_evdev_create(LV_INDEV_TYPE_POINTER, path->c_str());
 }
 
@@ -170,7 +169,7 @@ int main(int argc, char *argv[]) {
         int pipe_fd = atoi(argv[2]);
         proto.attach(pipe_fd);
         Leticia::set_updater_proto(&proto);
-        proto.ui_print("Launching Leticia UI");
+        Leticia::ui_print("Launching Leticia UI");
         zip_path = argv[3];
     }
 
@@ -185,25 +184,24 @@ int main(int argc, char *argv[]) {
     lv_display_t *disp = open_fbdev_display();
     if (disp == nullptr) {
         Leticia::ui_print("error: could not open a framebuffer device");
-        proto.ui_print("error: could not open a framebuffer device");
         return 1;
     }
 
-    lv_indev_t *indev = open_touch_indev(proto);
+    lv_indev_t *indev = open_touch_indev();
 
     Leticia::device_config_t device_config;
     if (Leticia::load_device_config(zip_path, device_config)) {
-        proto.ui_print("Loaded device config (backlight=%s)", device_config.backlight_path.c_str());
+        Leticia::ui_print("Loaded device config (backlight=%s)", device_config.backlight_path.c_str());
     } else {
-        proto.ui_print("No device config found, using auto-detection");
+        Leticia::ui_print("No device config found, using auto-detection");
     }
 
     Leticia::audio_manager audio;
     if (audio.init(device_config, zip_path)) {
-        proto.ui_print("Audio ready (output: %s)",
+        Leticia::ui_print("Audio ready (output: %s)",
                        audio.detected_output() == Leticia::audio_output::headphones ? "Headphones" : "Speaker");
     } else {
-        proto.ui_print("No UCM config found, audio test unavailable");
+        Leticia::ui_print("No UCM config found, audio test unavailable");
     }
 
     Leticia::power_manager power;
@@ -232,7 +230,7 @@ int main(int argc, char *argv[]) {
 
     mute.resume();
 
-    proto.ui_print("Leticia UI closed, returning to recovery");
+    Leticia::ui_print("Leticia UI closed, returning to recovery");
     Leticia::clear_updater_proto();
     proto.close();
 

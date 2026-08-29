@@ -20,28 +20,6 @@ bool updater_proto::attach(int fd) {
     return true;
 }
 
-void updater_proto::ui_print(const char *fmt, ...) {
-    if (pipe_ == nullptr)
-        return;
-
-    char msg[512];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(msg, sizeof(msg), fmt, args);
-    va_end(args);
-
-    fprintf(pipe_, "ui_print %s\n", msg);
-    fprintf(pipe_, "ui_print\n");
-}
-
-void updater_proto::set_progress(float fraction, float seconds) {
-    if (pipe_ == nullptr)
-        return;
-
-    fprintf(pipe_, "set_progress %f\n", static_cast<double>(fraction));
-    (void)seconds;
-}
-
 void updater_proto::close() {
     if (pipe_ != nullptr) {
         fclose(pipe_);
@@ -63,13 +41,14 @@ void clear_updater_proto() {
 }
 
 void ui_print(const char *fmt, ...) {
-    if (g_updater_proto != nullptr) {
+    if (g_updater_proto != nullptr && g_updater_proto->get_pipe() != nullptr) {
         char msg[512];
         va_list args;
         va_start(args, fmt);
         vsnprintf(msg, sizeof(msg), fmt, args);
         va_end(args);
-        g_updater_proto->ui_print("%s", msg);
+        fprintf(g_updater_proto->get_pipe(), "ui_print %s\n", msg);
+        fprintf(g_updater_proto->get_pipe(), "ui_print\n");
         return;
     }
 
@@ -78,6 +57,53 @@ void ui_print(const char *fmt, ...) {
     vfprintf(stderr, fmt, args);
     va_end(args);
     fprintf(stderr, "\n");
+}
+
+void ui_error(const char *fmt, ...) {
+    if (g_updater_proto != nullptr && g_updater_proto->get_pipe() != nullptr) {
+        char msg[512];
+        va_list args;
+        va_start(args, fmt);
+        vsnprintf(msg, sizeof(msg), fmt, args);
+        va_end(args);
+        fprintf(g_updater_proto->get_pipe(), "ui_print_color error %s\n", msg);
+        fprintf(g_updater_proto->get_pipe(), "ui_print\n");
+        return;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    fprintf(stderr, "error: ");
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+    fprintf(stderr, "\n");
+}
+
+void ui_warning(const char *fmt, ...) {
+    if (g_updater_proto != nullptr && g_updater_proto->get_pipe() != nullptr) {
+        char msg[512];
+        va_list args;
+        va_start(args, fmt);
+        vsnprintf(msg, sizeof(msg), fmt, args);
+        va_end(args);
+        fprintf(g_updater_proto->get_pipe(), "ui_print_color warning %s\n", msg);
+        fprintf(g_updater_proto->get_pipe(), "ui_print\n");
+        return;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    fprintf(stderr, "warning: ");
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+    fprintf(stderr, "\n");
+}
+
+void ui_set_progress(float fraction, float seconds) {
+    if (g_updater_proto != nullptr && g_updater_proto->get_pipe() != nullptr) {
+        fprintf(g_updater_proto->get_pipe(), "set_progress %f\n", static_cast<double>(fraction));
+        (void)seconds;
+    }
 }
 
 } // namespace Leticia

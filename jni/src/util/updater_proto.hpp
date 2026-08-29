@@ -24,24 +24,16 @@ public:
     bool attach(int fd);
 
     /**
-     * @brief Prints a message to the recovery console.
-     *
-     * @param fmt Printf style format string.
-     */
-    void ui_print(const char *fmt, ...) __attribute__((format(printf, 2, 3)));
-
-    /**
-     * @brief Sets the recovery progress bar.
-     *
-     * @param fraction Progress fraction from 0 to 1.
-     * @param seconds Estimated time for the segment.
-     */
-    void set_progress(float fraction, float seconds);
-
-    /**
      * @brief Closes the command pipe.
      */
     void close();
+
+    /**
+     * @brief Gets the internal command pipe.
+     *
+     * @return The command pipe FILE pointer.
+     */
+    FILE *get_pipe() const { return pipe_; }
 
 private:
     FILE *pipe_ = nullptr;
@@ -68,4 +60,26 @@ namespace Leticia {
      * @param fmt Printf style format string.
      */
     void ui_print(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+    /**
+     * @brief Prints a error to the recovery console using the global instance.
+     *
+     * @param fmt Printf style format string.
+     */
+    void ui_error(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+    /**
+     * @brief Prints a warning to the recovery console using the global instance.
+     *
+     * @param fmt Printf style format string.
+     */
+    void ui_warning(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+    /**
+     * @brief Sets the recovery progress bar using the global instance.
+     *
+     * @param fraction Progress fraction from 0 to 1.
+     * @param seconds Estimated time for the segment.
+     */
+    void ui_set_progress(float fraction, float seconds);
 } // namespace Leticia
