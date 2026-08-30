@@ -4,6 +4,9 @@
 #include <cstdlib>
 #include <string>
 #include <unistd.h>
+#include <pthread.h>
+#include <sched.h>
+#include <sys/syscall.h>
 
 #include <lvgl.h>
 
@@ -129,6 +132,40 @@ lv_indev_t *open_touch_indev() {
 }
 
 /**
+ * @brief Pins the calling thread to the CPUs specified in config.
+ * @param cpus Vector of exactly 2 CPU IDs.
+ */
+void apply_lvgl_cpu_affinity(const std::vector<int> &cpus) {
+    if (cpus.empty()) {
+        Leticia::ui_print("apply_audio_cpu_affinity: no LVGL thread affinity specified, skipping thread pin");
+        return;
+    }
+
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+
+    for (int cpu_id : cpus) {
+        if (cpu_id < 0 || cpu_id >= CPU_SETSIZE) {
+            Leticia::ui_print("apply_audio_cpu_affinity: CPU ID %d out of range [0-%d]", cpu_id, CPU_SETSIZE - 1);
+            return;
+        }
+        CPU_SET(cpu_id, &cpuset);
+    }
+
+    if (sched_setaffinity(syscall(SYS_gettid), sizeof(cpuset), &cpuset) != 0) {
+        Leticia::ui_print("apply_audio_cpu_affinity: sched_setaffinity: %s", strerror(errno));
+        return;
+    }
+
+    std::string cpu_list;
+    for (size_t i = 0; i < cpus.size(); i++) {
+        if (i > 0) cpu_list += ", ";
+        cpu_list += std::to_string(cpus[i]);
+    }
+    Leticia::ui_print("apply_lvgl_cpu_affinity: LVGL thread pinned to CPU(s): %s", cpu_list.c_str());
+}
+
+/**
  * @brief Builds the user interface.
  *
  * @param disp LVGL display pointer.
@@ -215,6 +252,8 @@ int main(int argc, char *argv[]) {
     } else {
         Leticia::ui_print("No UCM config found, audio test unavailable");
     }
+
+    apply_lvgl_cpu_affinity(device_config.lvgl_thread_affinity);
 
     Leticia::power_manager power;
     build_ui(disp, power, audio);

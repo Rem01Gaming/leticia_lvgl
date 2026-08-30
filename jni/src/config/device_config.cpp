@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <sstream>
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -76,12 +77,63 @@ void parse_ini(const std::string &text, device_config_t &out) {
 
         if (key == "backlight_path") {
             out.backlight_path = val;
-        } else if (key == "max_brightness") {
+            continue;
+        }
+
+        if (key == "max_brightness") {
             out.max_brightness = atoi(val.c_str());
-        } else if (key == "screen_blank_supported") {
+            continue;
+        }
+
+        if (key == "screen_blank_supported") {
             out.screen_blank_supported = (val == "1" || val == "true" || val == "yes");
-        } else if (key == "alsa_card") {
+            continue;
+        }
+
+        if (key == "alsa_card") {
             out.alsa_card = static_cast<unsigned int>(atoi(val.c_str()));
+            continue;
+        }
+
+        if (key == "audio_thread_affinity") {
+            std::istringstream iss(val);
+            std::vector<int> cpus;
+            int cpu_id;
+            while (iss >> cpu_id) {
+                cpus.push_back(cpu_id);
+            }
+
+            if (!iss.eof()) {
+                Leticia::ui_print("device_config: invalid audio_thread_affinity '%s', expected space-separated CPU IDs", val.c_str());
+            } else if (cpus.empty()) {
+                Leticia::ui_print("device_config: audio_thread_affinity must have at least 1 CPU ID");
+            } else {
+                out.audio_thread_affinity = std::move(cpus);
+            }
+
+            continue;
+        }
+
+        if (key == "lvgl_thread_affinity") {
+            std::istringstream iss(val);
+            std::vector<int> cpus;
+            int cpu_id;
+            while (iss >> cpu_id) {
+                cpus.push_back(cpu_id);
+            }
+
+            if (!iss.eof()) {
+                Leticia::ui_print(
+                        "device_config: invalid lvgl_thread_affinity '%s', expected space-separated CPU IDs",
+                        val.c_str());
+            } else if (cpus.empty()) {
+                Leticia::ui_print(
+                        "device_config: lvgl_thread_affinity must have at least 1 CPU ID");
+            } else {
+                out.lvgl_thread_affinity = std::move(cpus);
+            }
+
+            continue;
         }
     }
 }

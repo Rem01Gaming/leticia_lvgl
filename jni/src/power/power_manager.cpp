@@ -124,7 +124,7 @@ void power_manager::blank_framebuffer_pixels() {
     memset(mem, 0, screensize);
 
     munmap(mem, screensize);
-    Leticia::ui_print("Framebuffer pixels cleared to black (%zu bytes)", screensize);
+    Leticia::ui_print("Framebuffer pixels cleared to black");
 }
 
 bool power_manager::find_backlight() {

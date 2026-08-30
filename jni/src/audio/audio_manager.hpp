@@ -1,9 +1,13 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <thread>
+#include <condition_variable>
+#include <mutex>
 
 #include <lvgl.h>
 
@@ -75,7 +79,7 @@ public:
      * @return true if playing, false otherwise.
      */
     bool is_test_tone_playing() const {
-        return tone_playing_;
+        return tone_playing_.load(std::memory_order_acquire);
     }
 
     /**
@@ -109,15 +113,24 @@ private:
     audio_output mixer_applied_output_ = audio_output::unknown;
 
     ModernAlsa::interleaved_pcm_writer pcm_;
-    bool tone_playing_ = false;
+    std::atomic<bool> tone_playing_{false};
+    std::atomic<bool> should_stop_{false};
     size_t pcm_channels_ = 0;
     double phase_ = 0.0;
-    lv_timer_t *fill_timer_ = nullptr;
-    lv_timer_t *poll_timer_ = nullptr;
+
+    // Threading
+    std::thread audio_thread_;
+    std::mutex mtx_;
+    std::condition_variable cv_;
+    std::atomic<bool> thread_running_{false};
+    std::vector<int> cpu_affinity_;
 
     static constexpr size_t kMaxFillFrames = 4096;
     static constexpr size_t kMaxChannels = 2;
     std::array<int16_t, kMaxFillFrames * kMaxChannels> fill_buf_{};
+
+    // LVGL timer for jack polling only (lightweight)
+    lv_timer_t *poll_timer_ = nullptr;
 
     /**
      * @brief Applies audio routing to the target output.
@@ -128,9 +141,9 @@ private:
     bool apply_output(audio_output target);
 
     void on_input_event(const input_event_t &event);
+    void audio_thread_func();
     void fill_buffer();
 
-    static void fill_timer_trampoline(lv_timer_t *timer);
     static void poll_timer_trampoline(lv_timer_t *timer);
 };
 

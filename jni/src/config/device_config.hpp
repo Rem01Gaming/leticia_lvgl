@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace Leticia {
 
@@ -13,6 +14,7 @@ struct device_config_t {
      * @brief Path to the backlight sysfs node.
      */
     std::string backlight_path;
+
     /**
      * @brief Maximum brightness value.
      */
@@ -27,6 +29,16 @@ struct device_config_t {
      * @brief ALSA card index for audio output.
      */
     unsigned int alsa_card = 0;
+
+    /**
+     * @brief CPU IDs for LVGL thread pinning.
+     */
+    std::vector<int> lvgl_thread_affinity;
+
+    /**
+     * @brief CPU IDs for Audio thread pinning.
+     */
+    std::vector<int> audio_thread_affinity;
 
     /**
      * @brief Checks if the configuration is valid.
