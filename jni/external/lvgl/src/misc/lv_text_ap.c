@@ -6,12 +6,9 @@
 /*********************
  *      INCLUDES
  *********************/
-#include "lv_bidi.h"
-#include "lv_text_private.h"
+
 #include "lv_text_ap.h"
-#include "lv_types.h"
-#include "../stdlib/lv_mem.h"
-#include "../draw/lv_draw.h"
+#include "lv_text_private.h"
 
 /*********************
  *      DEFINES
@@ -46,6 +43,7 @@ static bool lv_text_is_arabic_vowel(uint16_t c);
 
 const ap_chars_map_t ap_chars_map[] = {
     /*{Key Offset, End, Beginning, Middle, Isolated, {conjunction}}*/
+    {0, 0xFE81, 0, 0, 0,  {0, 0}},      // أ
     {1, 0xFE84, -1, 0, -1,  {1, 0}},    // أ
     {2, 0xFE86, -1, 0, -1,  {1, 0}},    // ؤ
     {3, 0xFE88, -1, 0, -1,  {1, 0}},    // ﺇ
@@ -106,8 +104,10 @@ const ap_chars_map_t ap_chars_map[] = {
 /**********************
 *   GLOBAL FUNCTIONS
 **********************/
-uint32_t lv_text_ap_calc_bytes_count(const char * txt)
+
+size_t lv_text_ap_strlen(const char * txt)
 {
+    LV_ASSERT_NULL(txt);
     uint32_t txt_length = 0;
     uint32_t chars_cnt = 0;
     uint32_t current_ap_idx = 0;
@@ -137,7 +137,7 @@ uint32_t lv_text_ap_calc_bytes_count(const char * txt)
         i++;
     }
 
-    return chars_cnt + 1;
+    return chars_cnt;
 }
 
 void lv_text_ap_proc(const char * txt, char * txt_out)
@@ -147,6 +147,9 @@ void lv_text_ap_proc(const char * txt, char * txt_out)
     uint32_t * ch_enc;
     uint32_t * ch_fin;
     char * txt_out_temp;
+    if(!txt || !txt_out) {
+        return;
+    }
 
     txt_length = lv_text_get_encoded_length(txt);
 

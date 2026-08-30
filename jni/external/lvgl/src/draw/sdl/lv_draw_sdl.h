@@ -13,21 +13,11 @@ extern "C" {
 /*********************
  *      INCLUDES
  *********************/
-#include "../lv_draw.h"
+#include "../../lvgl_public.h"
 
 #if LV_USE_DRAW_SDL
 
-#include "../../misc/cache/lv_cache.h"
-#include "../../misc/lv_area.h"
-#include "../../misc/lv_color.h"
-#include "../../display/lv_display.h"
-#include "../../osal/lv_os.h"
-#include "../../draw/lv_draw_label.h"
-#include "../../draw/lv_draw_rect.h"
-#include "../../draw/lv_draw_arc.h"
-#include "../../draw/lv_draw_image.h"
-#include "../../draw/lv_draw_triangle.h"
-#include "../../draw/lv_draw_line.h"
+#include "../../osal/lv_os_private.h"
 
 /*********************
  *      DEFINES
@@ -36,13 +26,6 @@ extern "C" {
 /**********************
  *      TYPEDEFS
  **********************/
-
-typedef struct {
-    lv_draw_unit_t base_unit;
-    lv_draw_task_t * task_act;
-    uint32_t texture_cache_data_type;
-    lv_cache_t * texture_cache;
-} lv_draw_sdl_unit_t;
 
 /**********************
  * GLOBAL PROTOTYPES

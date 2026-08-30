@@ -14,10 +14,12 @@ extern "C" {
  *      INCLUDES
  *********************/
 
-#include "../textarea/lv_textarea_private.h"
-#include "lv_spinbox.h"
+#include "../../core/lv_obj_private.h"
+#include "../../lvgl_public.h"
 
 #if LV_USE_SPINBOX
+
+#include "../textarea/lv_textarea_private.h"
 
 /*********************
  *      DEFINES
@@ -28,7 +30,7 @@ extern "C" {
  **********************/
 
 /** Data of spinbox */
-struct lv_spinbox_t {
+struct _lv_spinbox_t {
     lv_textarea_t ta;             /**< Ext. of ancestor */
     /*New data for this type*/
     int32_t value;

@@ -14,10 +14,12 @@ extern "C" {
  *      INCLUDES
  *********************/
 
-#include "../bar/lv_bar_private.h"
-#include "lv_slider.h"
+#include "../../core/lv_obj_private.h"
+#include "../../lvgl_public.h"
 
-#if LV_USE_SLIDER != 0
+#if LV_USE_SLIDER
+
+#include "../bar/lv_bar_private.h"
 
 /*********************
  *      DEFINES
@@ -27,7 +29,7 @@ extern "C" {
  *      TYPEDEFS
  **********************/
 
-struct lv_slider_t {
+struct _lv_slider_t {
     lv_bar_t bar;                 /**< Add the ancestor's type first */
     lv_area_t left_knob_area;
     lv_area_t right_knob_area;

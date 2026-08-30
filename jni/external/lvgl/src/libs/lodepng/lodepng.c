@@ -3029,8 +3029,13 @@ static unsigned lodepng_chunk_createv(ucvector * out,
     unsigned char * chunk;
     CERROR_TRY_RETURN(lodepng_chunk_init(&chunk, out, length, type));
 
-    /*3: the data*/
-    lodepng_memcpy(chunk + 8, data, length);
+    /* 3: the data
+     * LVGL: In the upstream lodepng code, lodepng_memcpy doesn't use memcpy and instead uses a simple `for` loop to copy the data into its destination
+     * `lv_memcpy`, on the other hand, may call `memcpy` under the hood and `src` can't be NULL
+     * The function `addChunk_IEND` is an example of a function that calls this function with data == NULL*/
+    if(data) {
+    	lodepng_memcpy(chunk + 8, data, length);
+    }
 
     /*4: CRC (of the chunkname characters and the data)*/
     lodepng_chunk_generate_crc(chunk);
@@ -4663,6 +4668,8 @@ unsigned lodepng_inspect(unsigned * w, unsigned * h, LodePNGState * state,
     if(info->filter_method != 0) CERROR_RETURN_ERROR(state->error, 33);
     /*error: only interlace methods 0 and 1 exist in the specification*/
     if(info->interlace_method > 1) CERROR_RETURN_ERROR(state->error, 34);
+    /*error: bitdepths > 8 bits per channel are not supported*/
+    if(info->color.bitdepth > 8) CERROR_RETURN_ERROR(state->error, 116);
 
     if(!state->decoder.ignore_crc) {
         unsigned CRC = lodepng_read32bitInt(&in[29]);
@@ -5831,7 +5838,7 @@ unsigned lodepng_decode(unsigned char ** out, unsigned * w, unsigned * h,
             return 56; /*unsupported color mode conversion*/
         }
 
-        lv_draw_buf_t * new_buf = lv_draw_buf_create_user(image_cache_draw_buf_handlers,*w, *h, LV_COLOR_FORMAT_ARGB8888, 4 * *w);
+        lv_draw_buf_t * new_buf = lv_draw_buf_create_ex(image_cache_draw_buf_handlers,*w, *h, LV_COLOR_FORMAT_ARGB8888, 4 * *w);
         if(new_buf == NULL) {
             state->error = 83; /*alloc fail*/
         }
@@ -7427,6 +7434,8 @@ const char * lodepng_error_text(unsigned code)
             return "sBIT chunk has wrong size for the color type of the image";
         case 115:
             return "sBIT value out of range";
+        case 116:
+            return "bitdepths > 8 bits per channel are not supported";
     }
     return "unknown error code";
 }

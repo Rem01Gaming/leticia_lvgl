@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-#include "../../lv_conf_internal.h"
+#include "../../lvgl_public.h"
 #if LV_USE_THORVG_INTERNAL
 
 /*
@@ -89,7 +89,7 @@ bool LookaheadParserHandler::nextArrayValue()
 
 int LookaheadParserHandler::getInt()
 {
-    if (state != kHasNumber || !val.IsInt()) {
+    if (state != kHasNumber) {
         Error();
         return 0;
     }
@@ -126,7 +126,7 @@ const char* LookaheadParserHandler::getString()
 char* LookaheadParserHandler::getStringCopy()
 {
     auto str = getString();
-    if (str) return strdup(str);
+    if (str) return lv_strdup(str);
     return nullptr;
 }
 

@@ -14,10 +14,12 @@ extern "C" {
  *      INCLUDES
  *********************/
 
-#include "../buttonmatrix/lv_buttonmatrix_private.h"
-#include "lv_keyboard.h"
+#include "../../core/lv_obj_private.h"
+#include "../../lvgl_public.h"
 
 #if LV_USE_KEYBOARD
+
+#include "../buttonmatrix/lv_buttonmatrix_private.h"
 
 /*********************
  *      DEFINES
@@ -28,7 +30,7 @@ extern "C" {
  **********************/
 
 /** Data of keyboard */
-struct lv_keyboard_t {
+struct _lv_keyboard_t {
     lv_buttonmatrix_t btnm;
     lv_obj_t * ta;              /**< Pointer to the assigned text area */
     lv_keyboard_mode_t mode;    /**< Key map type */

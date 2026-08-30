@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-#include "../../lv_conf_internal.h"
+#include "../../lvgl_public.h"
 #if LV_USE_THORVG_INTERNAL
 
 #include "tvgCommon.h"
@@ -163,7 +163,7 @@ Result Saver::save(unique_ptr<Animation> animation, const string& path, uint32_t
     //animation holds the picture, it must be 1 at the bottom.
     auto remove = PP(a->picture())->refCnt <= 1 ? true : false;
 
-    if (mathZero(a->totalFrame())) {
+    if (tvg::zero(a->totalFrame())) {
         if (remove) delete(a);
         return Result::InsufficientCondition;
     }

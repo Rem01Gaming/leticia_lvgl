@@ -19,7 +19,7 @@
 #include <linux/limits.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <stdbool.h>
+#include LV_STDBOOL_INCLUDE
 #include <dirent.h>
 #include <libinput.h>
 #include <pthread.h>
@@ -31,6 +31,21 @@
     #include <linux/input.h>
 #endif
 
+#if defined(LV_LIBINPUT_XKB_KEY_MAP) && !LV_LIBINPUT_XKB_DISABLE_KEY_MAP
+#warning "LV_LIBINPUT_XKB_KEY_MAP is deprecated and will be removed in the next release. Use LV_LIBINPUT_XKB_RULES, LV_LIBINPUT_XKB_MODEL, LV_LIBINPUT_XKB_LAYOUT, LV_LIBINPUT_XKB_VARIANT, LV_LIBINPUT_XKB_OPTIONS_USE_DEFAULT, and LV_LIBINPUT_XKB_OPTIONS instead."
+#define XKB_RULE_NAMES LV_LIBINPUT_XKB_KEY_MAP
+#else
+
+#if LV_LIBINPUT_XKB_OPTIONS_USE_DEFAULT
+    #define RULE_NAMES_OPTIONS NULL
+#else
+    #define RULE_NAMES_OPTIONS LV_LIBINPUT_XKB_OPTIONS
+#endif
+
+#define XKB_RULE_NAMES  (struct xkb_rule_names) { \
+        .rules = LV_LIBINPUT_XKB_RULES, .model = LV_LIBINPUT_XKB_MODEL, .layout = LV_LIBINPUT_XKB_LAYOUT, .variant = LV_LIBINPUT_XKB_VARIANT, .options = RULE_NAMES_OPTIONS}
+#endif
+
 /*********************
  *      DEFINES
  *********************/
@@ -39,7 +54,7 @@
  *      TYPEDEFS
  **********************/
 
-struct lv_libinput_device {
+struct _lv_libinput_device {
     lv_libinput_capability capabilities;
     char * path;
 };
@@ -71,7 +86,7 @@ static void _delete(lv_libinput_t * dsc);
  *  STATIC VARIABLES
  **********************/
 
-static struct lv_libinput_device * devices = NULL;
+static struct _lv_libinput_device * devices = NULL;
 static size_t num_devices = 0;
 
 static const int timeout = 100; // ms
@@ -92,6 +107,8 @@ static const struct libinput_interface interface = {
 
 lv_libinput_capability lv_libinput_query_capability(struct libinput_device * device)
 {
+    LV_CHECK_ARG(device != NULL, return LV_LIBINPUT_CAPABILITY_NONE);
+
     lv_libinput_capability capability = LV_LIBINPUT_CAPABILITY_NONE;
     if(libinput_device_has_capability(device, LIBINPUT_DEVICE_CAP_KEYBOARD)
        && (libinput_device_keyboard_has_key(device, KEY_ENTER) || libinput_device_keyboard_has_key(device, KEY_KPENTER))) {
@@ -115,6 +132,8 @@ char * lv_libinput_find_dev(lv_libinput_capability capabilities, bool force_resc
 
 size_t lv_libinput_find_devs(lv_libinput_capability capabilities, char ** found, size_t count, bool force_rescan)
 {
+    LV_CHECK_ARG(found != NULL, return 0);
+
     if((!devices || force_rescan) && !_rescan_devices()) {
         return 0;
     }
@@ -131,8 +150,15 @@ size_t lv_libinput_find_devs(lv_libinput_capability capabilities, char ** found,
     return num_found;
 }
 
+void lv_libinput_clear_devs(void)
+{
+    _reset_scanned_devices();
+}
+
 lv_indev_t * lv_libinput_create(lv_indev_type_t indev_type, const char * dev_path)
 {
+    LV_CHECK_ARG(dev_path != NULL, return NULL);
+
     lv_libinput_t * dsc = lv_malloc_zeroed(sizeof(lv_libinput_t));
     LV_ASSERT_MALLOC(dsc);
     if(dsc == NULL) return NULL;
@@ -164,7 +190,7 @@ lv_indev_t * lv_libinput_create(lv_indev_type_t indev_type, const char * dev_pat
     dsc->fds[0].revents = 0;
 
 #if LV_LIBINPUT_XKB
-    struct xkb_rule_names names = LV_LIBINPUT_XKB_KEY_MAP;
+    struct xkb_rule_names names = XKB_RULE_NAMES;
     lv_xkb_init(&(dsc->xkb), names);
 #endif /* LV_LIBINPUT_XKB */
 
@@ -187,6 +213,8 @@ lv_indev_t * lv_libinput_create(lv_indev_type_t indev_type, const char * dev_pat
 
 void lv_libinput_delete(lv_indev_t * indev)
 {
+    if(indev == NULL) return;
+
     _delete(lv_indev_get_driver_data(indev));
     lv_indev_delete(indev);
 }
@@ -268,9 +296,10 @@ static bool _rescan_devices(void)
  */
 static bool _add_scanned_device(char * path, lv_libinput_capability capabilities)
 {
+    LV_ASSERT(path != NULL);
     /* Double array size every 2^n elements */
     if((num_devices & (num_devices + 1)) == 0) {
-        struct lv_libinput_device * tmp = realloc(devices, (2 * num_devices + 1) * sizeof(struct lv_libinput_device));
+        struct _lv_libinput_device * tmp = realloc(devices, (2 * num_devices + 1) * sizeof(struct _lv_libinput_device));
         if(!tmp) {
             perror("could not reallocate memory for devices array");
             return false;
@@ -305,6 +334,7 @@ static void _reset_scanned_devices(void)
 
 static void * _poll_thread(void * data)
 {
+    LV_ASSERT(data != NULL);
     lv_libinput_t * dsc = (lv_libinput_t *)data;
     struct libinput_event * event;
     int rc = 0;
@@ -342,6 +372,7 @@ static void * _poll_thread(void * data)
 
 lv_libinput_event_t * _get_event(lv_libinput_t * dsc)
 {
+    LV_ASSERT(dsc != NULL);
     if(dsc->start == dsc->end) {
         return NULL;
     }
@@ -356,11 +387,13 @@ lv_libinput_event_t * _get_event(lv_libinput_t * dsc)
 
 bool _event_pending(lv_libinput_t * dsc)
 {
+    LV_ASSERT(dsc != NULL);
     return dsc->start != dsc->end;
 }
 
 lv_libinput_event_t * _create_event(lv_libinput_t * dsc)
 {
+    LV_ASSERT(dsc != NULL);
     lv_libinput_event_t * evt = &dsc->points[dsc->end];
 
     if(++dsc->end == LV_LIBINPUT_MAX_EVENTS)
@@ -382,8 +415,10 @@ lv_libinput_event_t * _create_event(lv_libinput_t * dsc)
 
 static void _read(lv_indev_t * indev, lv_indev_data_t * data)
 {
+    LV_ASSERT(indev != NULL);
+    LV_ASSERT(data != NULL);
     lv_libinput_t * dsc = lv_indev_get_driver_data(indev);
-    LV_ASSERT_NULL(dsc);
+    LV_ASSERT(dsc != NULL);
 
     pthread_mutex_lock(&dsc->event_lock);
 
@@ -408,6 +443,8 @@ static void _read(lv_indev_t * indev, lv_indev_data_t * data)
 
 static void _read_pointer(lv_libinput_t * dsc, struct libinput_event * event)
 {
+    LV_ASSERT(dsc != NULL);
+    LV_ASSERT(event != NULL);
     struct libinput_event_touch * touch_event = NULL;
     struct libinput_event_pointer * pointer_event = NULL;
     lv_libinput_event_t * evt = NULL;
@@ -549,6 +586,8 @@ static void _read_pointer(lv_libinput_t * dsc, struct libinput_event * event)
 
 static void _read_keypad(lv_libinput_t * dsc, struct libinput_event * event)
 {
+    LV_ASSERT(dsc != NULL);
+    LV_ASSERT(event != NULL);
     struct libinput_event_keyboard * keyboard_event = NULL;
     enum libinput_event_type type = libinput_event_get_type(event);
     lv_libinput_event_t * evt = NULL;
@@ -595,6 +634,9 @@ static void _read_keypad(lv_libinput_t * dsc, struct libinput_event * event)
                 case KEY_END:
                     evt->key_val = LV_KEY_END;
                     break;
+                case KEY_ESC:
+                    evt->key_val = LV_KEY_ESC;
+                    break;
                 default:
                     evt->key_val = 0;
                     break;
@@ -625,6 +667,7 @@ static void _read_keypad(lv_libinput_t * dsc, struct libinput_event * event)
 
 static int _open_restricted(const char * path, int flags, void * user_data)
 {
+    LV_ASSERT(path != NULL);
     LV_UNUSED(user_data);
     int fd = open(path, flags);
     return fd < 0 ? -errno : fd;

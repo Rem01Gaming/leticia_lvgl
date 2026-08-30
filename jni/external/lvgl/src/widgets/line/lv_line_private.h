@@ -15,9 +15,9 @@ extern "C" {
  *********************/
 
 #include "../../core/lv_obj_private.h"
-#include "lv_line.h"
+#include "../../lvgl_public.h"
 
-#if LV_USE_LINE != 0
+#if LV_USE_LINE
 
 /*********************
  *      DEFINES
@@ -28,7 +28,7 @@ extern "C" {
  **********************/
 
 /** Data of line */
-struct lv_line_t {
+struct _lv_line_t {
     lv_obj_t obj;
     union {
         const lv_point_precise_t * constant;

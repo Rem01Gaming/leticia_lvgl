@@ -1,17 +1,14 @@
 /**
- * @file lv_string.c
+ * @file lv_string_builtin.c
  */
 
 /*********************
  *      INCLUDES
  *********************/
-#include "../../lv_conf_internal.h"
+
+#include "../../lvgl_public.h"
+
 #if LV_USE_STDLIB_STRING == LV_STDLIB_BUILTIN
-#include "../../misc/lv_assert.h"
-#include "../../misc/lv_log.h"
-#include "../../misc/lv_math.h"
-#include "../../stdlib/lv_string.h"
-#include "../../stdlib/lv_mem.h"
 
 /*********************
  *      DEFINES
@@ -55,7 +52,10 @@
 
 void * LV_ATTRIBUTE_FAST_MEM lv_memcpy(void * dst, const void * src, size_t len)
 {
-    uint8_t * d8 = dst;
+    LV_ASSERT(dst != NULL);
+    LV_ASSERT(src != NULL);
+
+    volatile uint8_t * d8 = dst;
     const uint8_t * s8 = src;
 
     /*Simplify for small memories*/
@@ -117,6 +117,8 @@ void * LV_ATTRIBUTE_FAST_MEM lv_memcpy(void * dst, const void * src, size_t len)
 
 void LV_ATTRIBUTE_FAST_MEM lv_memset(void * dst, uint8_t v, size_t len)
 {
+    LV_ASSERT(dst != NULL);
+
     uint8_t * d8 = (uint8_t *)dst;
     uintptr_t d_align = (lv_uintptr_t) d8 & ALIGN_MASK;
 
@@ -147,6 +149,9 @@ void LV_ATTRIBUTE_FAST_MEM lv_memset(void * dst, uint8_t v, size_t len)
 
 void * LV_ATTRIBUTE_FAST_MEM lv_memmove(void * dst, const void * src, size_t len)
 {
+    LV_ASSERT(dst != NULL);
+    LV_ASSERT(src != NULL);
+
     if(dst < src || (char *)dst > ((char *)src + len)) {
         return lv_memcpy(dst, src, len);
     }
@@ -173,6 +178,9 @@ void * LV_ATTRIBUTE_FAST_MEM lv_memmove(void * dst, const void * src, size_t len
 
 int lv_memcmp(const void * p1, const void * p2, size_t len)
 {
+    LV_ASSERT(p1 != NULL);
+    LV_ASSERT(p2 != NULL);
+
     const char * s1 = (const char *) p1;
     const char * s2 = (const char *) p2;
     while(--len > 0 && (*s1 == *s2)) {
@@ -185,14 +193,29 @@ int lv_memcmp(const void * p1, const void * p2, size_t len)
 /* See https://en.cppreference.com/w/c/string/byte/strlen for reference */
 size_t lv_strlen(const char * str)
 {
+    LV_ASSERT(str != NULL);
+
     size_t i = 0;
     while(str[i]) i++;
 
     return i;
 }
 
+size_t lv_strnlen(const char * str, size_t max_len)
+{
+    LV_ASSERT(str != NULL);
+
+    size_t i = 0;
+    while(i < max_len && str[i]) i++;
+
+    return i;
+}
+
 size_t lv_strlcpy(char * dst, const char * src, size_t dst_size)
 {
+    LV_ASSERT(dst != NULL);
+    LV_ASSERT(src != NULL);
+
     size_t i = 0;
     if(dst_size > 0) {
         for(; i < dst_size - 1 && src[i]; i++) {
@@ -206,6 +229,9 @@ size_t lv_strlcpy(char * dst, const char * src, size_t dst_size)
 
 char * lv_strncpy(char * dst, const char * src, size_t dst_size)
 {
+    LV_ASSERT(dst != NULL);
+    LV_ASSERT(src != NULL);
+
     size_t i;
     for(i = 0; i < dst_size && src[i]; i++) {
         dst[i] = src[i];
@@ -218,6 +244,9 @@ char * lv_strncpy(char * dst, const char * src, size_t dst_size)
 
 char * lv_strcpy(char * dst, const char * src)
 {
+    LV_ASSERT(dst != NULL);
+    LV_ASSERT(src != NULL);
+
     char * tmp = dst;
     while((*dst++ = *src++) != '\0');
     return tmp;
@@ -225,7 +254,29 @@ char * lv_strcpy(char * dst, const char * src)
 
 int lv_strcmp(const char * s1, const char * s2)
 {
+    LV_ASSERT(s1 != NULL);
+    LV_ASSERT(s2 != NULL);
+
     while(*s1 && (*s1 == *s2)) {
+        s1++;
+        s2++;
+    }
+    return *(const unsigned char *)s1 - *(const unsigned char *)s2;
+}
+
+int lv_strncmp(const char * s1, const char * s2, size_t len)
+{
+    LV_ASSERT(s1 != NULL);
+    LV_ASSERT(s2 != NULL);
+
+    if(len == 0) {
+        return 0;
+    }
+
+    while(len > 0 && *s1 && (*s1 == *s2)) {
+        if(--len == 0) {
+            return 0;
+        }
         s1++;
         s2++;
     }
@@ -234,6 +285,8 @@ int lv_strcmp(const char * s1, const char * s2)
 
 char * lv_strdup(const char * src)
 {
+    LV_ASSERT(src != NULL);
+
     size_t len = lv_strlen(src) + 1;
     char * dst = lv_malloc(len);
     if(dst == NULL) return NULL;
@@ -242,14 +295,33 @@ char * lv_strdup(const char * src)
     return dst;
 }
 
+char * lv_strndup(const char * src, size_t max_len)
+{
+    LV_ASSERT(src != NULL);
+
+    size_t len = lv_strnlen(src, max_len);
+    char * dst = lv_malloc(len + 1);
+    if(dst == NULL) return NULL;
+
+    lv_memcpy(dst, src, len);
+    dst[len] = '\0';
+    return dst;
+}
+
 char * lv_strcat(char * dst, const char * src)
 {
+    LV_ASSERT(dst != NULL);
+    LV_ASSERT(src != NULL);
+
     lv_strcpy(dst + lv_strlen(dst), src);
     return dst;
 }
 
 char * lv_strncat(char * dst, const char * src, size_t src_len)
 {
+    LV_ASSERT(dst != NULL);
+    LV_ASSERT(src != NULL);
+
     char * tmp = dst;
     while(*dst != '\0') {
         dst++;
@@ -260,6 +332,23 @@ char * lv_strncat(char * dst, const char * src, size_t src_len)
     }
     *dst = '\0';
     return tmp;
+}
+
+char * lv_strchr(const char * s, int c)
+{
+    LV_ASSERT(s != NULL);
+
+    for(; ; s++) {
+        if(*s == c) {
+            return (char *)s;
+        }
+
+        if(*s == '\0') {
+            break;
+        }
+    }
+
+    return NULL;
 }
 
 /**********************

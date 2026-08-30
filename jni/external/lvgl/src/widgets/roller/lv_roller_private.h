@@ -14,10 +14,10 @@ extern "C" {
  *      INCLUDES
  *********************/
 
-#include "lv_roller.h"
-
-#if LV_USE_ROLLER != 0
 #include "../../core/lv_obj_private.h"
+#include "../../lvgl_public.h"
+
+#if LV_USE_ROLLER
 
 /*********************
  *      DEFINES
@@ -27,7 +27,7 @@ extern "C" {
  *      TYPEDEFS
  **********************/
 
-struct lv_roller_t {
+struct _lv_roller_t {
     lv_obj_t obj;
     uint32_t option_cnt;          /**< Number of options*/
     uint32_t sel_opt_id;          /**< Index of the current option*/

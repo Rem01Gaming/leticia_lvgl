@@ -1,13 +1,14 @@
 /**
- * @file lv_malloc_core_rtthread.c
+ * @file lv_mem_core_rtthread.c
  */
 
 /*********************
  *      INCLUDES
  *********************/
-#include "../lv_mem.h"
+
+#include "../../lvgl_public.h"
+
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_RTTHREAD
-#include "../../stdlib/lv_mem.h"
 #include <rtthread.h>
 
 #ifndef RT_USING_HEAP

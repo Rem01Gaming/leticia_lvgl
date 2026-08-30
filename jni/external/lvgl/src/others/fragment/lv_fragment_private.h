@@ -14,7 +14,7 @@ extern "C" {
  *      INCLUDES
  *********************/
 
-#include "lv_fragment.h"
+#include "../../lvgl_public.h"
 
 #if LV_USE_FRAGMENT
 
@@ -29,7 +29,7 @@ extern "C" {
 /**
  * Fragment states
  */
-struct lv_fragment_managed_states_t  {
+struct _lv_fragment_managed_states_t  {
     /**
      * Class of the fragment
      */

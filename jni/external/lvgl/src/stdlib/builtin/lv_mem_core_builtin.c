@@ -1,20 +1,17 @@
 /**
- * @file lv_malloc_core.c
+ * @file lv_mem_core_builtin.c
  */
 
 /*********************
  *      INCLUDES
  *********************/
-#include "../lv_mem.h"
+
+#include "../../lvgl_public.h"
+
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
 
 #include "lv_tlsf.h"
-#include "../lv_string.h"
-#include "../../misc/lv_assert.h"
-#include "../../misc/lv_log.h"
-#include "../../misc/lv_ll.h"
-#include "../../misc/lv_math.h"
-#include "../../osal/lv_os.h"
+#include "../../osal/lv_os_private.h"
 #include "../../core/lv_global.h"
 
 #ifdef LV_MEM_POOL_INCLUDE
@@ -79,7 +76,7 @@ void lv_mem_init(void)
     state.tlsf = lv_tlsf_create_with_pool((void *)LV_MEM_POOL_ALLOC(LV_MEM_SIZE), LV_MEM_SIZE);
 #else
     /*Allocate a large array to store the dynamically allocated data*/
-    static LV_ATTRIBUTE_LARGE_RAM_ARRAY MEM_UNIT work_mem_int[LV_MEM_SIZE / sizeof(MEM_UNIT)];
+    static MEM_UNIT work_mem_int[LV_MEM_SIZE / sizeof(MEM_UNIT)] LV_ATTRIBUTE_LARGE_RAM_ARRAY;
     state.tlsf = lv_tlsf_create_with_pool((void *)work_mem_int, LV_MEM_SIZE);
 #endif
 #else
@@ -109,6 +106,9 @@ void lv_mem_deinit(void)
 
 lv_mem_pool_t lv_mem_add_pool(void * mem, size_t bytes)
 {
+    LV_CHECK_ARG(mem != NULL, return NULL);
+    LV_CHECK_ARG(bytes > 0, return NULL);
+
     lv_mem_pool_t new_pool = lv_tlsf_add_pool(state.tlsf, mem, bytes);
     if(!new_pool) {
         LV_LOG_WARN("failed to add memory pool, address: %p, size: %zu", mem, bytes);
@@ -177,12 +177,14 @@ void * lv_realloc_core(void * p, size_t new_size)
 
 void lv_free_core(void * p)
 {
+    if(p == NULL) return;
+
 #if LV_USE_OS
     lv_mutex_lock(&state.mutex);
 #endif
 
 #if LV_MEM_ADD_JUNK
-    lv_memset(p, 0xbb, lv_tlsf_block_size(data));
+    lv_memset(p, 0xbb, lv_tlsf_block_size(p));
 #endif
     size_t size = lv_tlsf_block_size(p);
     lv_tlsf_free(state.tlsf, p);
@@ -196,6 +198,8 @@ void lv_free_core(void * p)
 
 void lv_mem_monitor_core(lv_mem_monitor_t * mon_p)
 {
+    LV_CHECK_ARG(mon_p != NULL, return);
+
     /*Init the data*/
     lv_memzero(mon_p, sizeof(lv_mem_monitor_t));
     LV_TRACE_MEM("begin");

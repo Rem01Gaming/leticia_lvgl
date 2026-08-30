@@ -5,14 +5,9 @@
 /*********************
  *      INCLUDES
  *********************/
+
 #include "lv_timer_private.h"
 #include "../core/lv_global.h"
-#include "../tick/lv_tick.h"
-#include "../stdlib/lv_mem.h"
-#include "../stdlib/lv_sprintf.h"
-#include "lv_assert.h"
-#include "lv_ll.h"
-#include "lv_profiler.h"
 
 /*********************
  *      DEFINES
@@ -77,7 +72,7 @@ LV_ATTRIBUTE_TIMER_HANDLER uint32_t lv_timer_handler(void)
         return 1;
     }
 
-    LV_PROFILER_BEGIN;
+    LV_PROFILER_TIMER_BEGIN;
     lv_lock();
 
     uint32_t handler_start = lv_tick_get();
@@ -116,17 +111,7 @@ LV_ATTRIBUTE_TIMER_HANDLER uint32_t lv_timer_handler(void)
         }
     } while(timer_active);
 
-    uint32_t time_until_next = LV_NO_TIMER_READY;
-    next = lv_ll_get_head(timer_head);
-    while(next) {
-        if(!next->paused) {
-            uint32_t delay = lv_timer_time_remaining(next);
-            if(delay < time_until_next)
-                time_until_next = delay;
-        }
-
-        next = lv_ll_get_next(timer_head, next); /*Find the next timer*/
-    }
+    uint32_t time_until_next = lv_timer_get_time_to_next();
 
     state_p->busy_time += lv_tick_elaps(handler_start);
     uint32_t idle_period_time = lv_tick_elaps(state_p->idle_period_start);
@@ -143,7 +128,24 @@ LV_ATTRIBUTE_TIMER_HANDLER uint32_t lv_timer_handler(void)
     LV_TRACE_TIMER("finished (%" LV_PRIu32 " ms until the next timer call)", time_until_next);
     lv_unlock();
 
-    LV_PROFILER_END;
+    LV_PROFILER_TIMER_END;
+    return time_until_next;
+}
+
+LV_ATTRIBUTE_TIMER_HANDLER uint32_t lv_timer_get_time_to_next(void)
+{
+    uint32_t time_until_next = LV_NO_TIMER_READY;
+    lv_ll_t * timer_head = timer_ll_p;
+    lv_timer_t * next = lv_ll_get_head(timer_head);
+
+    while(next && time_until_next) {
+        if(!next->paused) {
+            uint32_t timer_remaining = lv_timer_time_remaining(next);
+            time_until_next = LV_MIN(time_until_next, timer_remaining);
+        }
+
+        next = lv_ll_get_next(timer_head, next); /*Find the next timer*/
+    }
 
     return time_until_next;
 }
@@ -178,6 +180,10 @@ lv_timer_t * lv_timer_create(lv_timer_cb_t timer_xcb, uint32_t period, void * us
     new_timer->last_run = lv_tick_get();
     new_timer->user_data = user_data;
     new_timer->auto_delete = true;
+#if LV_USE_EXT_DATA
+    new_timer->ext_data.free_cb = NULL;
+    new_timer->ext_data.data = NULL;
+#endif
 
     state.timer_created = true;
 
@@ -188,64 +194,74 @@ lv_timer_t * lv_timer_create(lv_timer_cb_t timer_xcb, uint32_t period, void * us
 
 void lv_timer_set_cb(lv_timer_t * timer, lv_timer_cb_t timer_cb)
 {
-    LV_ASSERT_NULL(timer);
+    LV_CHECK_ARG(timer != NULL, return);
     timer->timer_cb = timer_cb;
 }
 
 void lv_timer_delete(lv_timer_t * timer)
 {
+    if(timer == NULL) return;
     lv_ll_remove(timer_ll_p, timer);
     state.timer_deleted = true;
+
+#if LV_USE_EXT_DATA
+    if(timer->ext_data.free_cb) {
+        timer->ext_data.free_cb(timer->ext_data.data);
+        timer->ext_data.data = NULL;
+    }
+#endif
 
     lv_free(timer);
 }
 
 void lv_timer_pause(lv_timer_t * timer)
 {
-    LV_ASSERT_NULL(timer);
+    LV_CHECK_ARG(timer != NULL, return);
     timer->paused = true;
 }
 
 void lv_timer_resume(lv_timer_t * timer)
 {
-    LV_ASSERT_NULL(timer);
+    LV_CHECK_ARG(timer != NULL, return);
     timer->paused = false;
     lv_timer_handler_resume();
 }
 
 void lv_timer_set_period(lv_timer_t * timer, uint32_t period)
 {
-    LV_ASSERT_NULL(timer);
+    LV_CHECK_ARG(timer != NULL, return);
     timer->period = period;
+    lv_timer_handler_resume();
 }
 
 void lv_timer_ready(lv_timer_t * timer)
 {
-    LV_ASSERT_NULL(timer);
+    LV_CHECK_ARG(timer != NULL, return);
     timer->last_run = lv_tick_get() - timer->period - 1;
+    lv_timer_handler_resume();
 }
 
 void lv_timer_set_repeat_count(lv_timer_t * timer, int32_t repeat_count)
 {
-    LV_ASSERT_NULL(timer);
+    LV_CHECK_ARG(timer != NULL, return);
     timer->repeat_count = repeat_count;
 }
 
 void lv_timer_set_auto_delete(lv_timer_t * timer, bool auto_delete)
 {
-    LV_ASSERT_NULL(timer);
+    LV_CHECK_ARG(timer != NULL, return);
     timer->auto_delete = auto_delete;
 }
 
 void lv_timer_set_user_data(lv_timer_t * timer, void * user_data)
 {
-    LV_ASSERT_NULL(timer);
+    LV_CHECK_ARG(timer != NULL, return);
     timer->user_data = user_data;
 }
 
 void lv_timer_reset(lv_timer_t * timer)
 {
-    LV_ASSERT_NULL(timer);
+    LV_CHECK_ARG(timer != NULL, return);
     timer->last_run = lv_tick_get();
     lv_timer_handler_resume();
 }
@@ -292,13 +308,24 @@ LV_ATTRIBUTE_TIMER_HANDLER uint32_t lv_timer_handler_run_in_period(uint32_t peri
 
 void * lv_timer_get_user_data(lv_timer_t * timer)
 {
+    LV_CHECK_ARG(timer != NULL, return NULL);
     return timer->user_data;
 }
 
 bool lv_timer_get_paused(lv_timer_t * timer)
 {
+    LV_CHECK_ARG(timer != NULL, return false);
     return timer->paused;
 }
+
+#if LV_USE_EXT_DATA
+void lv_timer_set_external_data(lv_timer_t * timer, void * data, void (* free_cb)(void * data))
+{
+    LV_CHECK_ARG(timer != NULL, return);
+    timer->ext_data.data = data;
+    timer->ext_data.free_cb = free_cb;
+}
+#endif
 
 /**********************
  *   STATIC FUNCTIONS
@@ -323,7 +350,11 @@ static bool lv_timer_exec(lv_timer_t * timer)
         timer->last_run = lv_tick_get();
         LV_TRACE_TIMER("calling timer callback: %p", *((void **)&timer->timer_cb));
 
-        if(timer->timer_cb && original_repeat_count != 0) timer->timer_cb(timer);
+        if(timer->timer_cb && original_repeat_count != 0) {
+            LV_PROFILER_TIMER_BEGIN_TAG("timer_cb");
+            timer->timer_cb(timer);
+            LV_PROFILER_TIMER_END_TAG("timer_cb");
+        }
 
         if(!state.timer_deleted) {
             LV_TRACE_TIMER("timer callback %p finished", *((void **)&timer->timer_cb));

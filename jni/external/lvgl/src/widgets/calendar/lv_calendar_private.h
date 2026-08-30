@@ -15,7 +15,7 @@ extern "C" {
  *********************/
 
 #include "../../core/lv_obj_private.h"
-#include "lv_calendar.h"
+#include "../../lvgl_public.h"
 
 #if LV_USE_CALENDAR
 
@@ -28,7 +28,7 @@ extern "C" {
  **********************/
 
 /** Data of calendar */
-struct lv_calendar_t {
+struct _lv_calendar_t {
     lv_obj_t obj;
     /* New data for this type */
     lv_obj_t * btnm;

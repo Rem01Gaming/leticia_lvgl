@@ -14,9 +14,9 @@ extern "C" {
  *      INCLUDES
  *********************/
 #include "../../core/lv_obj_private.h"
-#include "lv_arc.h"
+#include "../../lvgl_public.h"
 
-#if LV_USE_ARC != 0
+#if LV_USE_ARC
 
 /*********************
  *      DEFINES
@@ -26,7 +26,7 @@ extern "C" {
  *      TYPEDEFS
  **********************/
 
-struct lv_arc_t {
+struct _lv_arc_t {
     lv_obj_t obj;
     int32_t rotation;
     lv_value_precise_t indic_angle_start;

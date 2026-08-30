@@ -15,7 +15,7 @@ extern "C" {
  *********************/
 
 #include "../../core/lv_obj_private.h"
-#include "lv_tabview.h"
+#include "../../lvgl_public.h"
 
 #if LV_USE_TABVIEW
 
@@ -31,10 +31,11 @@ extern "C" {
  *      TYPEDEFS
  **********************/
 
-struct lv_tabview_t {
+struct _lv_tabview_t {
     lv_obj_t obj;
     uint32_t tab_cur;
     lv_dir_t tab_pos;
+    int32_t tab_bar_size;
 };
 
 

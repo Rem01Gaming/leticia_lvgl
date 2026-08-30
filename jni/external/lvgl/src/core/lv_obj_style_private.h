@@ -14,7 +14,7 @@ extern "C" {
  *      INCLUDES
  *********************/
 
-#include "lv_obj_style.h"
+#include "../lvgl_public.h"
 
 /*********************
  *      DEFINES
@@ -24,20 +24,22 @@ extern "C" {
  *      TYPEDEFS
  **********************/
 
-struct lv_obj_style_t {
+struct _lv_obj_style_t {
     const lv_style_t * style;
     uint32_t selector : 24;
     uint32_t is_local : 1;
     uint32_t is_trans : 1;
+    uint32_t is_disabled : 1;
+    uint32_t is_theme : 1;  /**< The style is added by a theme */
 };
 
-struct lv_obj_style_transition_dsc_t {
-    uint16_t time;
-    uint16_t delay;
-    lv_style_selector_t selector;
-    lv_style_prop_t prop;
+struct _lv_obj_style_transition_dsc_t {
     lv_anim_path_cb_t path_cb;
     void * user_data;
+    lv_style_selector_t selector;
+    uint16_t time;
+    uint16_t delay;
+    lv_style_prop_t prop;
 };
 
 
@@ -63,19 +65,24 @@ void lv_obj_style_deinit(void);
  * @param part
  * @param prev_state
  * @param new_state
- * @param tr
+ * @param tr_dsc
  */
 void lv_obj_style_create_transition(lv_obj_t * obj, lv_part_t part, lv_state_t prev_state,
-                                    lv_state_t new_state, const lv_obj_style_transition_dsc_t * tr);
+                                    lv_state_t new_state, const lv_obj_style_transition_dsc_t * tr_dsc);
 
 /**
  * Used internally to compare the appearance of an object in 2 states
  * @param obj
  * @param state1
  * @param state2
+ * @param changed_part  optional (may be NULL) out-param. Receives the part that
+ *                      the differing styles belong to, or `LV_PART_ANY` if more
+ *                      than one part differs (or none does). Lets the caller scope
+ *                      the refresh to a single part when possible.
  * @return
  */
-lv_style_state_cmp_t lv_obj_style_state_compare(lv_obj_t * obj, lv_state_t state1, lv_state_t state2);
+lv_style_state_cmp_t lv_obj_style_state_compare(lv_obj_t * obj, lv_state_t state1, lv_state_t state2,
+                                                lv_part_t * changed_part);
 
 /**
  * Update the layer type of a widget bayed on its current styles.

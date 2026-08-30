@@ -15,8 +15,9 @@ extern "C" {
  *********************/
 
 #include "lv_draw_sw_blend.h"
-
 #if LV_USE_DRAW_SW
+
+#include "../lv_draw_sw_mask.h"
 
 /*********************
  *      DEFINES
@@ -30,7 +31,7 @@ extern "C" {
  *      TYPEDEFS
  **********************/
 
-struct lv_draw_sw_blend_dsc_t {
+struct _lv_draw_sw_blend_dsc_t {
     const lv_area_t * blend_area;   /**< The area with absolute coordinates to draw on `layer->buf`
                                      *   will be clipped to `layer->clip_area` */
     const void * src_buf;           /**< Pointer to an image to blend. If set `fill_color` is ignored */
@@ -46,7 +47,7 @@ struct lv_draw_sw_blend_dsc_t {
     lv_blend_mode_t blend_mode;     /**< E.g. LV_BLEND_MODE_ADDITIVE*/
 };
 
-struct lv_draw_sw_blend_fill_dsc_t {
+struct _lv_draw_sw_blend_fill_dsc_t {
     void * dest_buf;
     int32_t dest_w;
     int32_t dest_h;
@@ -58,7 +59,7 @@ struct lv_draw_sw_blend_fill_dsc_t {
     lv_area_t relative_area;
 };
 
-struct lv_draw_sw_blend_image_dsc_t {
+struct _lv_draw_sw_blend_image_dsc_t {
     void * dest_buf;
     int32_t dest_w;
     int32_t dest_h;

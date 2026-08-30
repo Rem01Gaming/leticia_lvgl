@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-#include "../../lv_conf_internal.h"
+#include "../../lvgl_public.h"
 #if LV_USE_THORVG_INTERNAL
 
 #ifndef _TVG_INLIST_H_
@@ -103,7 +103,7 @@ struct Inlist
         if (element == tail) tail = element->prev;
     }
 
-    bool empty()
+    bool empty() const
     {
         return head ? false : true;
     }

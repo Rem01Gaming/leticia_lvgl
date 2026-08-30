@@ -7,16 +7,14 @@
  *      INCLUDES
  *********************/
 #include "lv_imagebutton_private.h"
+
+#if LV_USE_IMAGEBUTTON
+
 #include "../../misc/lv_area_private.h"
 #include "../../draw/lv_draw_private.h"
 #include "../../core/lv_obj_private.h"
 #include "../../core/lv_obj_event_private.h"
 #include "../../core/lv_obj_class_private.h"
-
-
-#if LV_USE_IMAGEBUTTON != 0
-
-#include "../../stdlib/lv_string.h"
 
 /*********************
  *      DEFINES
@@ -49,7 +47,7 @@ const lv_obj_class_t lv_imagebutton_class = {
     .instance_size = sizeof(lv_imagebutton_t),
     .constructor_cb = lv_imagebutton_constructor,
     .event_cb = lv_imagebutton_event,
-    .name = "imagebutton",
+    .name = "lv_imagebutton",
 };
 
 /**********************
@@ -75,9 +73,13 @@ lv_obj_t * lv_imagebutton_create(lv_obj_t * parent)
 void lv_imagebutton_set_src(lv_obj_t * obj, lv_imagebutton_state_t state, const void * src_left, const void * src_mid,
                             const void * src_right)
 {
-    LV_ASSERT_OBJ(obj, MY_CLASS);
+    LV_CHECK_OBJ(obj, MY_CLASS, return);
 
     lv_imagebutton_t * imagebutton = (lv_imagebutton_t *)obj;
+
+    if((src_left || src_right) && !src_mid) {
+        LV_LOG_WARN("middle image source is not set while left and/or right image sources are");
+    }
 
     update_src_info(&imagebutton->src_left[state], src_left);
     update_src_info(&imagebutton->src_mid[state], src_mid);
@@ -86,9 +88,36 @@ void lv_imagebutton_set_src(lv_obj_t * obj, lv_imagebutton_state_t state, const 
     refr_image(obj);
 }
 
+void lv_imagebutton_set_src_left(lv_obj_t * obj, lv_imagebutton_state_t state, const void * src_left)
+{
+    LV_CHECK_OBJ(obj, MY_CLASS, return);
+
+    lv_imagebutton_t * imagebutton = (lv_imagebutton_t *)obj;
+    update_src_info(&imagebutton->src_left[state], src_left);
+    refr_image(obj);
+}
+
+void lv_imagebutton_set_src_right(lv_obj_t * obj, lv_imagebutton_state_t state, const void * src_right)
+{
+    LV_CHECK_OBJ(obj, MY_CLASS, return);
+
+    lv_imagebutton_t * imagebutton = (lv_imagebutton_t *)obj;
+    update_src_info(&imagebutton->src_right[state], src_right);
+    refr_image(obj);
+}
+
+void lv_imagebutton_set_src_mid(lv_obj_t * obj, lv_imagebutton_state_t state, const void * src_mid)
+{
+    LV_CHECK_OBJ(obj, MY_CLASS, return);
+
+    lv_imagebutton_t * imagebutton = (lv_imagebutton_t *)obj;
+    update_src_info(&imagebutton->src_mid[state], src_mid);
+    refr_image(obj);
+}
+
 void lv_imagebutton_set_state(lv_obj_t * obj, lv_imagebutton_state_t state)
 {
-    LV_ASSERT_OBJ(obj, MY_CLASS);
+    LV_CHECK_OBJ(obj, MY_CLASS, return);
 
     lv_state_t obj_state = LV_STATE_DEFAULT;
     if(state == LV_IMAGEBUTTON_STATE_PRESSED ||
@@ -112,7 +141,7 @@ void lv_imagebutton_set_state(lv_obj_t * obj, lv_imagebutton_state_t state)
 
 const void * lv_imagebutton_get_src_left(lv_obj_t * obj, lv_imagebutton_state_t state)
 {
-    LV_ASSERT_OBJ(obj, MY_CLASS);
+    LV_CHECK_OBJ(obj, MY_CLASS, return NULL);
 
     lv_imagebutton_t * imagebutton = (lv_imagebutton_t *)obj;
 
@@ -121,7 +150,7 @@ const void * lv_imagebutton_get_src_left(lv_obj_t * obj, lv_imagebutton_state_t 
 
 const void * lv_imagebutton_get_src_middle(lv_obj_t * obj, lv_imagebutton_state_t state)
 {
-    LV_ASSERT_OBJ(obj, MY_CLASS);
+    LV_CHECK_OBJ(obj, MY_CLASS, return NULL);
     lv_imagebutton_t * imagebutton = (lv_imagebutton_t *)obj;
 
     return imagebutton->src_mid[state].img_src;
@@ -129,7 +158,7 @@ const void * lv_imagebutton_get_src_middle(lv_obj_t * obj, lv_imagebutton_state_
 
 const void * lv_imagebutton_get_src_right(lv_obj_t * obj, lv_imagebutton_state_t state)
 {
-    LV_ASSERT_OBJ(obj, MY_CLASS);
+    LV_CHECK_OBJ(obj, MY_CLASS, return NULL);
     lv_imagebutton_t * imagebutton = (lv_imagebutton_t *)obj;
 
     return imagebutton->src_right[state].img_src;
@@ -201,6 +230,7 @@ static void draw_main(lv_event_t * e)
 
     lv_draw_image_dsc_t img_dsc;
     lv_draw_image_dsc_init(&img_dsc);
+    img_dsc.base.layer = layer;
     lv_obj_init_draw_image_dsc(obj, LV_PART_MAIN, &img_dsc);
 
     lv_area_t coords_part;
@@ -265,7 +295,7 @@ static void refr_image(lv_obj_t * obj)
 /**
  * If `src` is not defined for the current state try to get a state which is related to the current but has `src`.
  * E.g. if the PRESSED src is not set but the RELEASED does, use the RELEASED.
- * @param imagebutton pointer to an image button
+ * @param obj         pointer to an image button
  * @param state the state to convert
  * @return the suggested state
  */
@@ -302,7 +332,7 @@ static lv_imagebutton_state_t suggest_state(lv_obj_t * obj, lv_imagebutton_state
 
 static lv_imagebutton_state_t get_state(const lv_obj_t * imagebutton)
 {
-    LV_ASSERT_OBJ(imagebutton, MY_CLASS);
+    LV_CHECK_OBJ(imagebutton, MY_CLASS, return 0);
 
     lv_state_t obj_state = lv_obj_get_state(imagebutton);
 

@@ -4,6 +4,13 @@
  */
 
 /*********************
+ *      INCLUDES
+ *********************/
+#include "../../../lvgl_public.h"
+
+#if LV_USE_RENESAS_GLCDC
+
+/*********************
  *PLATFORM ABSTRACTION
  *********************/
 
@@ -14,27 +21,21 @@
         #define _RENESAS_RX_ 1
     #endif
     #define USE_FREE_RTOS 1
-    #define DISPLAY_HSIZE_INPUT0 LCD_CH0_IN_GR2_HSIZE
-    #define DISPLAY_VSIZE_INPUT0 LCD_CH0_IN_GR2_VSIZE
+    #define DISPLAY_HSIZE_INPUT0                LCD_CH0_IN_GR2_HSIZE
+    #define DISPLAY_VSIZE_INPUT0                LCD_CH0_IN_GR2_VSIZE
+    #define DISPLAY_BUFFER_STRIDE_BYTES_INPUT0  LCD_CH0_IN_GR2_LINEOFFSET
 #endif /*_RENESAS_RA_*/
-
-/*********************
- *      INCLUDES
- *********************/
-#include "lv_renesas_glcdc.h"
-
-#if LV_USE_RENESAS_GLCDC
 
 #ifdef _RENESAS_RA_
-    #include "LVGL_thread.h"
+    #include <LVGL_thread.h>
 #else /* RX */
-    #include "hal_data.h"
-    #include "platform.h"
-    #include "r_glcdc_rx_if.h"
-    #include "r_glcdc_rx_pinset.h"
+    #include <hal_data.h>
+    #include <platform.h>
+    #include <r_glcdc_rx_if.h>
+    #include <r_glcdc_rx_pinset.h>
 #endif /*_RENESAS_RA_*/
 
-#include <stdbool.h>
+#include LV_STDBOOL_INCLUDE
 #include "../../../display/lv_display_private.h"
 #include "../../../draw/sw/lv_draw_sw.h"
 
@@ -96,6 +97,7 @@ lv_display_t * lv_renesas_glcdc_direct_create(void)
 
 lv_display_t * lv_renesas_glcdc_partial_create(void * buf1, void * buf2, size_t buf_size)
 {
+    LV_CHECK_ARG(buf1 != NULL, return NULL);
     partial_buffer_size = buf_size;
     return glcdc_create(buf1, buf2, buf_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
 }
@@ -165,7 +167,7 @@ static lv_display_t * glcdc_create(void * buf1, void * buf2, uint32_t buf_size, 
         LV_ASSERT(0);
     }
 
-    lv_display_set_buffers(display, buf1, buf2, buf_size, render_mode);
+    lv_display_set_buffers_with_stride(display, buf1, buf2, buf_size, DISPLAY_BUFFER_STRIDE_BYTES_INPUT0, render_mode);
 
     return display;
 }
@@ -301,9 +303,9 @@ static void flush_partial(lv_display_t * display, const lv_area_t * area, uint8_
         }
 
         if(rotation == LV_DISPLAY_ROTATION_180)
-            lv_draw_sw_rotate(img, rotation_buffer, w, h, w_stride, w_stride, rotation, cf);
+            lv_draw_rotate(img, rotation_buffer, w, h, w_stride, w_stride, rotation, cf);
         else /* 90 or 270 */
-            lv_draw_sw_rotate(img, rotation_buffer, w, h, w_stride, h_stride, rotation, cf);
+            lv_draw_rotate(img, rotation_buffer, w, h, w_stride, h_stride, rotation, cf);
 
         img = rotation_buffer;
 

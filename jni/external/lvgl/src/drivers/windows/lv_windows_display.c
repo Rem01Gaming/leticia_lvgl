@@ -7,7 +7,7 @@
  *      INCLUDES
  *********************/
 
-#include "lv_windows_display.h"
+#include "../../lvgl_public.h"
 #if LV_USE_WINDOWS
 
 #include "lv_windows_context.h"
@@ -49,6 +49,7 @@ lv_display_t * lv_windows_create_display(
     bool allow_dpi_override,
     bool simulator_mode)
 {
+    LV_CHECK_ARG(title != NULL, return NULL);
     lv_windows_create_display_data_t data;
 
     lv_memzero(&data, sizeof(lv_windows_create_display_data_t));
@@ -88,6 +89,7 @@ lv_display_t * lv_windows_create_display(
 
 HWND lv_windows_get_display_window_handle(lv_display_t * display)
 {
+    LV_CHECK_ARG(display != NULL, return NULL);
     return (HWND)lv_display_get_driver_data(display);
 }
 
@@ -119,26 +121,36 @@ static unsigned int __stdcall lv_windows_display_thread_entrypoint(
     void * parameter)
 {
     lv_windows_create_display_data_t * data = parameter;
-    LV_ASSERT_NULL(data);
+    LV_ASSERT(data != NULL);
 
     DWORD window_style = WS_OVERLAPPEDWINDOW;
+    DWORD ext_window_style = WS_EX_CLIENTEDGE;
+    RECT rect = { 0, 0, data->hor_res, data->ver_res };
+
     if(data->simulator_mode) {
         window_style &= ~(WS_SIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME);
     }
+    else {
+        /* Have Windows compute window size so, regardless of window style,
+         * the CLIENT AREA has dimensions [data->hor_res, data->ver_res].
+         * This is the area needed for LVGL to render to. */
+        AdjustWindowRectEx(&rect, window_style, false, ext_window_style);
+    }
 
     HWND window_handle = CreateWindowExW(
-                             WS_EX_CLIENTEDGE,
+                             ext_window_style,
                              L"LVGL.Window",
                              data->title,
                              window_style,
                              CW_USEDEFAULT,
                              0,
-                             data->hor_res,
-                             data->ver_res,
+                             rect.right - rect.left,
+                             rect.bottom - rect.top,
                              NULL,
                              NULL,
                              NULL,
                              data);
+
     if(!window_handle) {
         return 0;
     }

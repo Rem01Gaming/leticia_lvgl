@@ -14,7 +14,7 @@ extern "C" {
  *      INCLUDES
  *********************/
 
-#include "lv_xkb.h"
+#include "../../lvgl_public.h"
 
 #if defined(LV_LIBINPUT_XKB) && LV_LIBINPUT_XKB
 
@@ -30,7 +30,7 @@ extern "C" {
  *      TYPEDEFS
  **********************/
 
-struct lv_xkb_t {
+struct _lv_xkb_t {
     struct xkb_keymap * keymap;
     struct xkb_state * state;
 };

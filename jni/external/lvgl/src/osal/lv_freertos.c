@@ -12,13 +12,15 @@
 /*********************
  *      INCLUDES
  *********************/
-#include "lv_os.h"
+#include "lv_os_private.h"
 #if LV_USE_OS == LV_OS_FREERTOS
 
-#include "atomic.h"
+#ifdef ESP_PLATFORM
+    #include <freertos/atomic.h>
+#else
+    #include <atomic.h>
+#endif
 
-#include "../tick/lv_tick.h"
-#include "../misc/lv_log.h"
 #include "../core/lv_global.h"
 
 /*********************
@@ -26,9 +28,6 @@
  *********************/
 
 #define ulMAX_COUNT 10U
-#ifndef pcTASK_NAME
-    #define pcTASK_NAME "lvglDraw"
-#endif
 
 #define globals LV_GLOBAL_DEFAULT()
 
@@ -61,7 +60,7 @@ static void prvTestAndDecrement(lv_thread_sync_t * pxCond,
  *  STATIC VARIABLES
  **********************/
 
-#if (ESP_PLATFORM)
+#ifdef ESP_PLATFORM
     static portMUX_TYPE critSectionMux = portMUX_INITIALIZER_UNLOCKED;
 #endif
 
@@ -69,7 +68,7 @@ static void prvTestAndDecrement(lv_thread_sync_t * pxCond,
  *      MACROS
  **********************/
 
-#if (ESP_PLATFORM)
+#ifdef ESP_PLATFORM
     #define _enter_critical()   taskENTER_CRITICAL(&critSectionMux);
     #define _exit_critical()    taskEXIT_CRITICAL(&critSectionMux);
     #define _enter_critical_isr() taskENTER_CRITICAL_FROM_ISR();
@@ -85,7 +84,8 @@ static void prvTestAndDecrement(lv_thread_sync_t * pxCond,
  *   GLOBAL FUNCTIONS
  **********************/
 
-lv_result_t lv_thread_init(lv_thread_t * pxThread, lv_thread_prio_t xSchedPriority,
+lv_result_t lv_thread_init(lv_thread_t * pxThread,  const char * const name,
+                           lv_thread_prio_t xSchedPriority,
                            void (*pvStartRoutine)(void *), size_t usStackSize,
                            void * xAttr)
 {
@@ -94,7 +94,7 @@ lv_result_t lv_thread_init(lv_thread_t * pxThread, lv_thread_prio_t xSchedPriori
 
     BaseType_t xTaskCreateStatus = xTaskCreate(
                                        prvRunThread,
-                                       pcTASK_NAME,
+                                       name,
                                        (configSTACK_DEPTH_TYPE)(usStackSize / sizeof(StackType_t)),
                                        (void *)pxThread,
                                        tskIDLE_PRIORITY + xSchedPriority,
@@ -129,7 +129,7 @@ lv_result_t lv_mutex_lock(lv_mutex_t * pxMutex)
     /* If mutex in uninitialized, perform initialization. */
     prvCheckMutexInit(pxMutex);
 
-    BaseType_t xMutexTakeStatus = xSemaphoreTake(pxMutex->xMutex, portMAX_DELAY);
+    BaseType_t xMutexTakeStatus = xSemaphoreTakeRecursive(pxMutex->xMutex, portMAX_DELAY);
     if(xMutexTakeStatus != pdTRUE) {
         LV_LOG_ERROR("xSemaphoreTake failed!");
         return LV_RESULT_INVALID;
@@ -165,7 +165,7 @@ lv_result_t lv_mutex_unlock(lv_mutex_t * pxMutex)
     /* If mutex in uninitialized, perform initialization. */
     prvCheckMutexInit(pxMutex);
 
-    BaseType_t xMutexGiveStatus = xSemaphoreGive(pxMutex->xMutex);
+    BaseType_t xMutexGiveStatus = xSemaphoreGiveRecursive(pxMutex->xMutex);
     if(xMutexGiveStatus != pdTRUE) {
         LV_LOG_ERROR("xSemaphoreGive failed!");
         return LV_RESULT_INVALID;
@@ -176,6 +176,8 @@ lv_result_t lv_mutex_unlock(lv_mutex_t * pxMutex)
 
 lv_result_t lv_mutex_delete(lv_mutex_t * pxMutex)
 {
+    if(pxMutex->xIsInitialized == pdFALSE)
+        return LV_RESULT_INVALID;
     vSemaphoreDelete(pxMutex->xMutex);
     pxMutex->xIsInitialized = pdFALSE;
 
@@ -390,7 +392,7 @@ lv_result_t lv_thread_sync_signal_isr(lv_thread_sync_t * pxCond)
 
 void lv_freertos_task_switch_in(const char * name)
 {
-    if(lv_strcmp(name, "IDLE")) globals->freertos_idle_task_running = false;
+    if(lv_strncmp(name, "IDLE", 4)) globals->freertos_idle_task_running = false;
     else globals->freertos_idle_task_running = true;
 
     globals->freertos_task_switch_timestamp = lv_tick_get();
@@ -403,6 +405,7 @@ void lv_freertos_task_switch_out(void)
     else globals->freertos_non_idle_time_sum += elaps;
 }
 
+#if LV_OS_IDLE_PERCENT_CUSTOM == 0
 uint32_t lv_os_get_idle_percent(void)
 {
     if(globals->freertos_non_idle_time_sum + globals->freertos_idle_time_sum == 0) {
@@ -417,6 +420,12 @@ uint32_t lv_os_get_idle_percent(void)
     globals->freertos_idle_time_sum = 0;
 
     return pct;
+}
+#endif
+
+void lv_sleep_ms(uint32_t ms)
+{
+    vTaskDelay(ms / portTICK_PERIOD_MS);
 }
 
 /**********************

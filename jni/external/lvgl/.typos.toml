@@ -1,10 +1,15 @@
 [files]
 extend-exclude = [
     ".git/",
-    "docs/_static/css/fontawesome.min.css",
+    "docs/src/_static/css/fontawesome.min.css",
+    "docs/CHANGELOG.rst",
     "docs/README_*",
+    "docs/src/_static/css/*.min.css",
+    "docs/src/_static/jquery.js",
+    "libs/",
+    "scripts/gen_json/create_fake_lib_c.py",
     "src/libs/",
-    "docs/CHANGELOG.rst"
+    "zephyr/Kconfig",
 ]
 ignore-hidden = false
 
@@ -13,7 +18,6 @@ extend-ignore-re = [
     "\\bser[^a-z]",
     "\\bfle[^a-z]",
     '"Lorem ipsum .*"',
-    'ACI',
     "Nam consectetur",
     "U\\+[0-9A-F]{4}",
     '\{ "[a-z]+", "[^ -~]+" \},',
@@ -21,9 +25,31 @@ extend-ignore-re = [
     "Rename lv_chart_clear_serie",
     "rename LV_ROLLER_MODE_INIFINITE",
     "CARD_INFO_SET\\(&img_multilang_avatar_.*\\)",
+    "ist",
     "ACI\\)",
+    "ACI \\(",
+    "glIndexs",
+    "glIsEnabledi",
+    "PNGs",
+    "STRUCT_FIELDs",
+]
+
+extend-ignore-identifiers-re = [
+    "sme_.+",
 ]
 
 [default.extend-words]
 # https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6loca.html
 "loca" = "loca"
+"viewe" = "viewe"
+
+[default.extend-identifiers]
+"aout_p" = "aout_p"
+"PN" = "PN"
+"rin" = "rin"
+"mask_rin_param" = "mask_rin_param"
+"thr_tick" = "thr_tick"
+"VGLITE_BLIT_SPLIT_THR" = "VGLITE_BLIT_SPLIT_THR"
+"yout" = "yout"
+# Typo in STM32 HAL
+"FBStartAdress" = "FBStartAdress"

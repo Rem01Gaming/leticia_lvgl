@@ -7,8 +7,8 @@
 /*********************
  *      INCLUDES
  *********************/
-#include "lv_ll.h"
-#include "../stdlib/lv_mem.h"
+
+#include "../lvgl_public.h"
 
 /*********************
  *      DEFINES
@@ -41,6 +41,8 @@ static void node_set_next(lv_ll_t * ll_p, lv_ll_node_t * act, lv_ll_node_t * nex
 
 void lv_ll_init(lv_ll_t * ll_p, uint32_t node_size)
 {
+    LV_CHECK_ARG(ll_p != NULL, return);
+    LV_CHECK_ARG(node_size > 0, return, "cannot initialize a linked list with empty nodes");
     ll_p->head = NULL;
     ll_p->tail = NULL;
 #ifdef LV_ARCH_64
@@ -129,7 +131,7 @@ void lv_ll_remove(lv_ll_t * ll_p, void * node_p)
     if(ll_p == NULL) return;
 
     if(lv_ll_get_head(ll_p) == node_p) {
-        /*The new head will be the node after 'n_act'*/
+        /*The new head will be the node after 'node_p'*/
         ll_p->head = lv_ll_get_next(ll_p, node_p);
         if(ll_p->head == NULL) {
             ll_p->tail = NULL;
@@ -139,7 +141,7 @@ void lv_ll_remove(lv_ll_t * ll_p, void * node_p)
         }
     }
     else if(lv_ll_get_tail(ll_p) == node_p) {
-        /*The new tail will be the node before 'n_act'*/
+        /*The new tail will be the node before 'node_p'*/
         ll_p->tail = lv_ll_get_prev(ll_p, node_p);
         if(ll_p->tail == NULL) {
             ll_p->head = NULL;

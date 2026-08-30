@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-#include "../../lv_conf_internal.h"
+#include "../../lvgl_public.h"
 #if LV_USE_THORVG_INTERNAL
 
 /* This Source Code Form is subject to the terms of the Mozilla Public
@@ -130,7 +130,7 @@ float LottieInterpolator::progress(float t)
 
 void LottieInterpolator::set(const char* key, Point& inTangent, Point& outTangent)
 {
-    this->key = strdup(key);
+    this->key = lv_strdup(key);
     this->inTangent = inTangent;
     this->outTangent = outTangent;
 

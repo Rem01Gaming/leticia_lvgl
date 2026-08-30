@@ -6,17 +6,18 @@
 /*********************
  *      INCLUDES
  *********************/
-#include "../lv_theme_private.h"
-#include "../../../lvgl.h"
+
+#include "../../lvgl_public.h"
 
 #if LV_USE_THEME_MONO
 
-#include "lv_theme_mono.h"
+#include "../lv_theme_private.h"
 #include "../../core/lv_global.h"
 
 /*********************
  *      DEFINES
  *********************/
+
 struct _my_theme_t;
 typedef struct _my_theme_t my_theme_t;
 
@@ -25,12 +26,27 @@ typedef struct _my_theme_t my_theme_t;
 #define COLOR_FG      dark_bg ? lv_color_white() : lv_color_black()
 #define COLOR_BG      dark_bg ? lv_color_black() : lv_color_white()
 
+#define SPINNER_WIDTH    8
+
 #define BORDER_W_NORMAL  1
 #define BORDER_W_PR      3
 #define BORDER_W_DIS     0
 #define BORDER_W_FOCUS   1
 #define BORDER_W_EDIT    2
+#define BORDER_W_MAX     3
+
 #define PAD_DEF          4
+
+/* when using border width changes to provided feedback, adjust
+ * the padding as well to prevent layout shift. All widths must be <= PAD_DEF */
+
+#define EXPAND_BORDER(style, state)  \
+    do { \
+        lv_style_set_border_width(&(style), BORDER_W_ ## state); \
+        lv_style_set_pad_all(&(style), PAD_DEF + BORDER_W_NORMAL - BORDER_W_ ## state); \
+    } while(0)
+
+
 
 /**********************
  *      TYPEDEFS
@@ -51,6 +67,9 @@ typedef struct {
     lv_style_t large_border;
     lv_style_t large_line_space;
     lv_style_t underline;
+#if LV_USE_SPINNER
+    lv_style_t spinner_indic;
+#endif
 #if LV_USE_TEXTAREA
     lv_style_t ta_cursor;
 #endif
@@ -88,7 +107,7 @@ static void style_init(my_theme_t * theme, bool dark_bg, const lv_font_t * font)
     style_init_reset(&theme->styles.scrollbar);
     lv_style_set_bg_opa(&theme->styles.scrollbar, LV_OPA_COVER);
     lv_style_set_bg_color(&theme->styles.scrollbar, COLOR_FG);
-    lv_style_set_width(&theme->styles.scrollbar,  PAD_DEF);
+    lv_style_set_width(&theme->styles.scrollbar, PAD_DEF);
 
     style_init_reset(&theme->styles.scr);
     lv_style_set_bg_opa(&theme->styles.scr, LV_OPA_COVER);
@@ -115,7 +134,7 @@ static void style_init(my_theme_t * theme, bool dark_bg, const lv_font_t * font)
     lv_style_set_anim_duration(&theme->styles.card, 300);
 
     style_init_reset(&theme->styles.pr);
-    lv_style_set_border_width(&theme->styles.pr, BORDER_W_PR);
+    EXPAND_BORDER(theme->styles.pr, PR);
 
     style_init_reset(&theme->styles.inv);
     lv_style_set_bg_opa(&theme->styles.inv, LV_OPA_COVER);
@@ -127,7 +146,7 @@ static void style_init(my_theme_t * theme, bool dark_bg, const lv_font_t * font)
     lv_style_set_outline_color(&theme->styles.inv, COLOR_BG);
 
     style_init_reset(&theme->styles.disabled);
-    lv_style_set_border_width(&theme->styles.disabled, BORDER_W_DIS);
+    EXPAND_BORDER(theme->styles.disabled, DIS);
 
     style_init_reset(&theme->styles.focus);
     lv_style_set_outline_width(&theme->styles.focus, 1);
@@ -158,6 +177,13 @@ static void style_init(my_theme_t * theme, bool dark_bg, const lv_font_t * font)
     style_init_reset(&theme->styles.underline);
     lv_style_set_text_decor(&theme->styles.underline, LV_TEXT_DECOR_UNDERLINE);
 
+#if LV_USE_SPINNER
+    style_init_reset(&theme->styles.spinner_indic);
+    lv_style_set_arc_color(&theme->styles.spinner_indic, COLOR_FG);
+    lv_style_set_arc_width(&theme->styles.spinner_indic, SPINNER_WIDTH);
+    lv_style_set_arc_rounded(&theme->styles.spinner_indic, true);
+#endif
+
 #if LV_USE_TEXTAREA
     style_init_reset(&theme->styles.ta_cursor);
     lv_style_set_border_side(&theme->styles.ta_cursor, LV_BORDER_SIDE_LEFT);
@@ -180,11 +206,53 @@ static void style_init(my_theme_t * theme, bool dark_bg, const lv_font_t * font)
  *   GLOBAL FUNCTIONS
  **********************/
 
+lv_theme_t * lv_theme_mono_init(lv_display_t * disp, bool dark_bg, const lv_font_t * font)
+{
+    /*This trick is required only to avoid the garbage collection of
+     *styles' data if LVGL is used in a binding (e.g. MicroPython)
+     *In a general case styles could be in a simple `static lv_style_t my_style...` variables*/
+    if(!lv_theme_mono_is_inited()) {
+        theme_def = lv_malloc_zeroed(sizeof(my_theme_t));
+        LV_ASSERT_MALLOC(theme_def);
+    }
+
+    my_theme_t * theme = theme_def;
+
+    theme->base.disp = disp;
+    theme->base.font_small = LV_FONT_DEFAULT;
+    theme->base.font_normal = LV_FONT_DEFAULT;
+    theme->base.font_large = LV_FONT_DEFAULT;
+    theme->base.apply_cb = theme_apply;
+#if LV_USE_EXT_DATA
+    theme->base.ext_data.free_cb = NULL;
+    theme->base.ext_data.data = NULL;
+#endif
+
+    style_init(theme, dark_bg, font);
+
+    if(disp == NULL || lv_display_get_theme(disp) == (lv_theme_t *)theme) {
+        lv_obj_report_style_change(NULL);
+    }
+
+    theme->inited = true;
+
+    return (lv_theme_t *)theme_def;
+}
+
 bool lv_theme_mono_is_inited(void)
 {
     my_theme_t * theme = theme_def;
     if(theme == NULL) return false;
     return theme->inited;
+}
+
+lv_theme_t * lv_theme_mono_get(void)
+{
+    if(!lv_theme_mono_is_inited()) {
+        return NULL;
+    }
+
+    return (lv_theme_t *)theme_def;
 }
 
 void lv_theme_mono_deinit(void)
@@ -198,36 +266,20 @@ void lv_theme_mono_deinit(void)
                 lv_style_reset(theme_styles + i);
             }
         }
+#if LV_USE_EXT_DATA
+        if(theme->base.ext_data.free_cb) {
+            theme->base.ext_data.free_cb(theme->base.ext_data.data);
+            theme->base.ext_data.data = NULL;
+        }
+#endif
         lv_free(theme_def);
         theme_def = NULL;
     }
 }
 
-lv_theme_t * lv_theme_mono_init(lv_display_t * disp, bool dark_bg, const lv_font_t * font)
-{
-    /*This trick is required only to avoid the garbage collection of
-     *styles' data if LVGL is used in a binding (e.g. MicroPython)
-     *In a general case styles could be in simple `static lv_style_t my_style...` variables*/
-    if(!lv_theme_mono_is_inited()) {
-        theme_def = lv_malloc_zeroed(sizeof(my_theme_t));
-    }
-
-    my_theme_t * theme = theme_def;
-
-    theme->base.disp = disp;
-    theme->base.font_small = LV_FONT_DEFAULT;
-    theme->base.font_normal = LV_FONT_DEFAULT;
-    theme->base.font_large = LV_FONT_DEFAULT;
-    theme->base.apply_cb = theme_apply;
-
-    style_init(theme, dark_bg, font);
-
-    if(disp == NULL || lv_display_get_theme(disp) == (lv_theme_t *) theme) lv_obj_report_style_change(NULL);
-
-    theme->inited = true;
-
-    return (lv_theme_t *)theme_def;
-}
+/**********************
+ *   STATIC FUNCTIONS
+ **********************/
 
 static void theme_apply(lv_theme_t * th, lv_obj_t * obj)
 {
@@ -244,12 +296,13 @@ static void theme_apply(lv_theme_t * th, lv_obj_t * obj)
 
     if(lv_obj_check_type(obj, &lv_obj_class)) {
 #if LV_USE_TABVIEW
+        lv_obj_t * grandparent = lv_obj_get_parent(parent);
         /*Tabview content area*/
         if(lv_obj_check_type(parent, &lv_tabview_class)) {
             return;
         }
         /*Tabview pages*/
-        else if(lv_obj_check_type(lv_obj_get_parent(parent), &lv_tabview_class)) {
+        else if(grandparent && lv_obj_check_type(grandparent, &lv_tabview_class)) {
             lv_obj_add_style(obj, &theme->styles.card, 0);
             lv_obj_add_style(obj, &theme->styles.no_radius, 0);
             lv_obj_add_style(obj, &theme->styles.scrollbar, LV_PART_SCROLLBAR);
@@ -434,6 +487,12 @@ static void theme_apply(lv_theme_t * th, lv_obj_t * obj)
     }
 #endif
 
+#if LV_USE_SPINNER
+    else if(lv_obj_check_type(obj, &lv_spinner_class)) {
+        lv_obj_add_style(obj, &theme->styles.spinner_indic, LV_PART_INDICATOR);
+    }
+#endif
+
 #if LV_USE_TEXTAREA
     else if(lv_obj_check_type(obj, &lv_textarea_class)) {
         lv_obj_add_style(obj, &theme->styles.card, 0);
@@ -467,6 +526,7 @@ static void theme_apply(lv_theme_t * th, lv_obj_t * obj)
         lv_obj_add_style(obj, &theme->styles.large_border, LV_PART_ITEMS | LV_STATE_EDITED);
     }
 #endif
+
 #if LV_USE_LIST
     else if(lv_obj_check_type(obj, &lv_list_class)) {
         lv_obj_add_style(obj, &theme->styles.card, 0);
@@ -481,7 +541,6 @@ static void theme_apply(lv_theme_t * th, lv_obj_t * obj)
         lv_obj_add_style(obj, &theme->styles.pr, LV_STATE_PRESSED);
         lv_obj_add_style(obj, &theme->styles.focus, LV_STATE_FOCUS_KEY);
         lv_obj_add_style(obj, &theme->styles.large_border, LV_STATE_EDITED);
-
     }
 #endif
 #if LV_USE_MSGBOX
@@ -490,6 +549,7 @@ static void theme_apply(lv_theme_t * th, lv_obj_t * obj)
         return;
     }
 #endif
+
 #if LV_USE_SPINBOX
     else if(lv_obj_check_type(obj, &lv_spinbox_class)) {
         lv_obj_add_style(obj, &theme->styles.card, 0);
@@ -514,10 +574,6 @@ static void theme_apply(lv_theme_t * th, lv_obj_t * obj)
     }
 #endif
 }
-
-/**********************
- *   STATIC FUNCTIONS
- **********************/
 
 static void style_init_reset(lv_style_t * style)
 {

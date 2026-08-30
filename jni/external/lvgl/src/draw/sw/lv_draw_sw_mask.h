@@ -13,10 +13,7 @@ extern "C" {
 /*********************
  *      INCLUDES
  *********************/
-#include "../../misc/lv_area.h"
-#include "../../misc/lv_color.h"
-#include "../../misc/lv_math.h"
-#include "../../misc/lv_types.h"
+#include "lv_draw_sw.h"
 
 /*********************
  *      DEFINES
@@ -72,8 +69,6 @@ void lv_draw_sw_mask_init(void);
 
 void lv_draw_sw_mask_deinit(void);
 
-//! @cond Doxygen_Suppress
-
 /**
  * Apply the added buffers on a line. Used internally by the library's drawing routines.
  * @param masks the masks list to apply, must be ended with NULL pointer in array.
@@ -90,8 +85,6 @@ lv_draw_sw_mask_res_t /* LV_ATTRIBUTE_FAST_MEM */ lv_draw_sw_mask_apply(void * m
                                                                         int32_t abs_x,
                                                                         int32_t abs_y,
                                                                         int32_t len);
-
-//! @endcond
 
 /**
  * Free the data from the parameter.
@@ -147,9 +140,10 @@ void lv_draw_sw_mask_angle_init(lv_draw_sw_mask_angle_param_t * param, int32_t v
  * @param rect coordinates of the rectangle to affect (absolute coordinates)
  * @param radius radius of the rectangle
  * @param inv true: keep the pixels inside the rectangle; keep the pixels outside of the rectangle
+ * @return LV_RESULT_OK if the mask radius was initialized correctly else LV_RESULT_INVALID
  */
-void lv_draw_sw_mask_radius_init(lv_draw_sw_mask_radius_param_t * param, const lv_area_t * rect, int32_t radius,
-                                 bool inv);
+lv_result_t lv_draw_sw_mask_radius_init(lv_draw_sw_mask_radius_param_t * param, const lv_area_t * rect, int32_t radius,
+                                        bool inv);
 
 /**
  * Initialize a fade mask.

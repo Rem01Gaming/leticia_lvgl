@@ -11,9 +11,6 @@
 
 #if LV_USE_FRAGMENT
 
-#include "../../misc/lv_ll.h"
-#include "../../stdlib/lv_string.h"
-
 /*********************
  *      DEFINES
  *********************/
@@ -21,11 +18,11 @@
 /**********************
  *      TYPEDEFS
  **********************/
-typedef struct lv_fragment_stack_item_t {
+typedef struct _lv_fragment_stack_item_t {
     lv_fragment_managed_states_t * states;
 } lv_fragment_stack_item_t;
 
-struct lv_fragment_manager_t {
+struct _lv_fragment_manager_t {
     lv_fragment_t * parent;
     /**
      * Linked list to store attached fragments

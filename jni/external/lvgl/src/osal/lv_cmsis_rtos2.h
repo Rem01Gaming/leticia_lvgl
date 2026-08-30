@@ -21,7 +21,7 @@ extern "C" {
  *********************/
 #if LV_USE_OS == LV_OS_CMSIS_RTOS2
 
-#include "cmsis_os2.h"
+#include <cmsis_os2.h>
 
 /*********************
  *      DEFINES
@@ -50,4 +50,4 @@ typedef osEventFlagsId_t lv_thread_sync_t;
 } /*extern "C"*/
 #endif
 
-#endif /*LV_OS_CMSIS_RTOS2*/
+#endif /*LV_CMSIS_RTOS2_H*/

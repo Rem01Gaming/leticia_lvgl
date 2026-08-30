@@ -14,12 +14,12 @@ extern "C" {
  *      INCLUDES
  *********************/
 
-#include "../../lv_conf_internal.h"
+#include "../../lvgl_public.h"
 
 #if LV_USE_DRAW_VG_LITE
 
 #include <math.h>
-#include <stdbool.h>
+#include LV_STDBOOL_INCLUDE
 #include <float.h>
 
 /*********************
@@ -36,6 +36,7 @@ extern "C" {
 #define MATH_SINF(x) sinf(x)
 #define MATH_COSF(x) cosf(x)
 #define MATH_ASINF(x) asinf(x)
+#define MATH_ACOSF(x) acosf(x)
 #define MATH_FABSF(x) fabsf(x)
 #define MATH_SQRTF(x) sqrtf(x)
 

@@ -14,9 +14,10 @@ extern "C" {
  *      INCLUDES
  *********************/
 
-#include "lv_rlottie.h"
+#include "../../lvgl_public.h"
 #if LV_USE_RLOTTIE
 #include "../../widgets/image/lv_image_private.h"
+#include "../../../lvgl_private.h"
 
 /*********************
  *      DEFINES
@@ -29,7 +30,7 @@ extern "C" {
 /** definition in lottieanimation_capi.c */
 struct Lottie_Animation_S;
 
-struct lv_rlottie_t {
+struct _lv_rlottie_t {
     lv_image_t img_ext;
     struct Lottie_Animation_S * animation;
     lv_timer_t * task;

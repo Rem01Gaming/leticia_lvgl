@@ -33,6 +33,21 @@ void exit_btn_event_cb(lv_event_t *e) {
     g_should_exit.store(true, std::memory_order_relaxed);
 }
 
+#if LV_USE_LOG
+/**
+ * @brief Forwards LVGL's internal log messages to the recovery UI pipe.
+ *
+ * The default log target is stderr, which is not captured by recovery.log
+ * in this environment, so LVGL's own diagnostics (fbdev open/mmap status,
+ * resolution, color depth, draw dispatch warnings) would otherwise be
+ * invisible. This is temporary/debug instrumentation for the 9.6 port.
+ */
+void lvgl_log_cb(lv_log_level_t level, const char *buf) {
+    (void)level;
+    Leticia::ui_print("lvgl: %s", buf);
+}
+#endif
+
 /**
  * @brief Requests an exit from the safety exit watchdog thread.
  *
@@ -94,17 +109,25 @@ lv_display_t *open_fbdev_display() {
         return nullptr;
 
     if (env_override != nullptr) {
-        lv_linux_fbdev_set_file(disp, env_override);
+        if (lv_linux_fbdev_set_file(disp, env_override) != LV_RESULT_OK) {
+            Leticia::ui_print("error: failed to map framebuffer device %s", env_override);
+            lv_display_delete(disp);
+            return nullptr;
+        }
         lv_linux_fbdev_set_force_refresh(disp, true);
         return disp;
     }
 
     for (const char *candidate : candidates) {
-        if (access(candidate, F_OK) == 0) {
-            lv_linux_fbdev_set_file(disp, candidate);
-            lv_linux_fbdev_set_force_refresh(disp, true);
-            return disp;
+        if (access(candidate, F_OK) != 0)
+            continue;
+
+        if (lv_linux_fbdev_set_file(disp, candidate) != LV_RESULT_OK) {
+            Leticia::ui_print("error: failed to map framebuffer device %s", candidate);
+            continue;
         }
+        lv_linux_fbdev_set_force_refresh(disp, true);
+        return disp;
     }
 
     lv_display_delete(disp);
@@ -230,6 +253,10 @@ int main(int argc, char *argv[]) {
 
     lv_init();
 
+#if LV_USE_LOG
+    lv_log_register_print_cb(lvgl_log_cb);
+#endif
+
     lv_display_t *disp = open_fbdev_display();
     if (disp == nullptr) {
         Leticia::ui_print("error: could not open a framebuffer device");
@@ -264,8 +291,16 @@ int main(int argc, char *argv[]) {
     Leticia::safety_exit_monitor safety_exit;
     safety_exit.start(safety_exit_cb);
 
+    Leticia::ui_print("Entering main loop (draw_unit_cnt=%d)", LV_DRAW_SW_DRAW_UNIT_CNT);
+
+    bool first_frame_logged = false;
     while (!g_should_exit.load(std::memory_order_relaxed)) {
         uint32_t idle_ms = lv_timer_handler();
+
+        if (!first_frame_logged) {
+            Leticia::ui_print("First lv_timer_handler() call returned (idle_ms=%u)", idle_ms);
+            first_frame_logged = true;
+        }
 
         power.service_pending_wake();
 

@@ -16,9 +16,9 @@ extern "C" {
 
 #include "../image/lv_image_private.h"
 #include "../../misc/lv_anim_private.h"
-#include "lv_animimage.h"
+#include "../../lvgl_public.h"
 
-#if LV_USE_ANIMIMG != 0
+#if LV_USE_ANIMIMG
 
 /*********************
  *      DEFINES
@@ -29,7 +29,7 @@ extern "C" {
  **********************/
 
 /** Data of the animimage */
-struct lv_animimg_t {
+struct _lv_animimg_t {
     lv_image_t img;
     lv_anim_t anim;
     /* picture sequence */

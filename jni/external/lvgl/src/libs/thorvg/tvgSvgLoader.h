@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-#include "../../lv_conf_internal.h"
+#include "../../lvgl_public.h"
 #if LV_USE_THORVG_INTERNAL
 
 #ifndef _TVG_SVG_LOADER_H_
@@ -28,6 +28,8 @@
 
 #include "tvgTaskScheduler.h"
 #include "tvgSvgLoaderCommon.h"
+
+using std::ifstream;
 
 class SvgLoader : public ImageLoader, public Task
 {

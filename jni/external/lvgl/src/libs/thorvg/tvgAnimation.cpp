@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-#include "../../lv_conf_internal.h"
+#include "../../lvgl_public.h"
 #if LV_USE_THORVG_INTERNAL
 
 #include "tvgFrameModule.h"
@@ -98,7 +98,7 @@ float Animation::duration() const noexcept
 
 Result Animation::segment(float begin, float end) noexcept
 {
-    if (begin < 0.0 || end > 1.0 || begin >= end) return Result::InvalidArguments;
+    if (begin < 0.0 || end > 1.0 || begin > end) return Result::InvalidArguments;
 
     auto loader = pImpl->picture->pImpl->loader;
     if (!loader) return Result::InsufficientCondition;

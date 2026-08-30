@@ -14,10 +14,10 @@ extern "C" {
  *      INCLUDES
  *********************/
 
-#include "lv_msgbox.h"
+#include "../../core/lv_obj_private.h"
+#include "../../lvgl_public.h"
 
 #if LV_USE_MSGBOX
-#include "../../core/lv_obj_private.h"
 
 /*********************
  *      DEFINES
@@ -31,12 +31,13 @@ extern "C" {
  *      TYPEDEFS
  **********************/
 
-struct lv_msgbox_t {
+struct _lv_msgbox_t {
     lv_obj_t obj;
     lv_obj_t * header;
     lv_obj_t * content;
     lv_obj_t * footer;
     lv_obj_t * title;
+    uint32_t auto_parent : 1; /**< Mark that the parent was automatically created*/
 };
 
 

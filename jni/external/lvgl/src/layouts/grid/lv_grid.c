@@ -6,14 +6,14 @@
 /*********************
  *      INCLUDES
  *********************/
-#include "lv_grid.h"
+
+#include "../../lvgl_public.h"
 
 #if LV_USE_GRID
 
-#include "../../stdlib/lv_string.h"
-#include "../lv_layout.h"
 #include "../../core/lv_obj_private.h"
 #include "../../core/lv_global.h"
+
 /*********************
  *      DEFINES
  *********************/
@@ -54,10 +54,10 @@ typedef struct {
  *  STATIC PROTOTYPES
  **********************/
 static void grid_update(lv_obj_t * cont, void * user_data);
-static void calc(lv_obj_t * obj, lv_grid_calc_t * calc);
+static lv_result_t calc(lv_obj_t * cont, lv_grid_calc_t * calc_out);
 static void calc_free(lv_grid_calc_t * calc);
-static void calc_cols(lv_obj_t * cont, lv_grid_calc_t * c);
-static void calc_rows(lv_obj_t * cont, lv_grid_calc_t * c);
+static lv_result_t calc_cols(lv_obj_t * cont, lv_grid_calc_t * c);
+static lv_result_t calc_rows(lv_obj_t * cont, lv_grid_calc_t * c);
 static void item_repos(lv_obj_t * item, lv_grid_calc_t * c, item_repos_hint_t * hint);
 static int32_t grid_align(int32_t cont_size, bool auto_size, lv_grid_align_t align, int32_t gap,
                           uint32_t track_num,
@@ -66,57 +66,70 @@ static uint32_t count_tracks(const int32_t * templ);
 
 static inline const int32_t * get_col_dsc(lv_obj_t * obj)
 {
-    return lv_obj_get_style_grid_column_dsc_array(obj, 0);
+    LV_ASSERT(obj != NULL);
+    return lv_obj_get_style_grid_column_dsc_array(obj, LV_PART_MAIN);
 }
 static inline const int32_t * get_row_dsc(lv_obj_t * obj)
 {
-    return lv_obj_get_style_grid_row_dsc_array(obj, 0);
+    LV_ASSERT(obj != NULL);
+    return lv_obj_get_style_grid_row_dsc_array(obj, LV_PART_MAIN);
 }
 static inline int32_t get_col_pos(lv_obj_t * obj)
 {
-    return lv_obj_get_style_grid_cell_column_pos(obj, 0);
+    LV_ASSERT(obj != NULL);
+    return lv_obj_get_style_grid_cell_column_pos(obj, LV_PART_MAIN);
 }
 static inline int32_t get_row_pos(lv_obj_t * obj)
 {
-    return lv_obj_get_style_grid_cell_row_pos(obj, 0);
+    LV_ASSERT(obj != NULL);
+    return lv_obj_get_style_grid_cell_row_pos(obj, LV_PART_MAIN);
 }
 static inline int32_t get_col_span(lv_obj_t * obj)
 {
-    return lv_obj_get_style_grid_cell_column_span(obj, 0);
+    LV_ASSERT(obj != NULL);
+    return lv_obj_get_style_grid_cell_column_span(obj, LV_PART_MAIN);
 }
 static inline int32_t get_row_span(lv_obj_t * obj)
 {
-    return lv_obj_get_style_grid_cell_row_span(obj, 0);
+    LV_ASSERT(obj != NULL);
+    return lv_obj_get_style_grid_cell_row_span(obj, LV_PART_MAIN);
 }
 static inline lv_grid_align_t get_cell_col_align(lv_obj_t * obj)
 {
-    return lv_obj_get_style_grid_cell_x_align(obj, 0);
+    LV_ASSERT(obj != NULL);
+    return lv_obj_get_style_grid_cell_x_align(obj, LV_PART_MAIN);
 }
 static inline lv_grid_align_t get_cell_row_align(lv_obj_t * obj)
 {
-    return lv_obj_get_style_grid_cell_y_align(obj, 0);
+    LV_ASSERT(obj != NULL);
+    return lv_obj_get_style_grid_cell_y_align(obj, LV_PART_MAIN);
 }
 static inline lv_grid_align_t get_grid_col_align(lv_obj_t * obj)
 {
-    return lv_obj_get_style_grid_column_align(obj, 0);
+    LV_ASSERT(obj != NULL);
+    return lv_obj_get_style_grid_column_align(obj, LV_PART_MAIN);
 }
 static inline lv_grid_align_t get_grid_row_align(lv_obj_t * obj)
 {
-    return lv_obj_get_style_grid_row_align(obj, 0);
+    LV_ASSERT(obj != NULL);
+    return lv_obj_get_style_grid_row_align(obj, LV_PART_MAIN);
 }
 static inline int32_t get_margin_hor(lv_obj_t * obj)
 {
+    LV_ASSERT(obj != NULL);
     return lv_obj_get_style_margin_left(obj, LV_PART_MAIN)
            + lv_obj_get_style_margin_right(obj, LV_PART_MAIN);
 }
 static inline int32_t get_margin_ver(lv_obj_t * obj)
 {
+    LV_ASSERT(obj != NULL);
     return lv_obj_get_style_margin_top(obj, LV_PART_MAIN)
            + lv_obj_get_style_margin_bottom(obj, LV_PART_MAIN);
 }
 
-static inline int32_t div_round_closest(int32_t dividend, int32_t divisor)
+static inline int32_t lv_div_round_closest(int32_t dividend, int32_t divisor)
 {
+    LV_ASSERT(divisor != 0);
     return (dividend + divisor / 2) / divisor;
 }
 
@@ -143,12 +156,15 @@ static inline int32_t div_round_closest(int32_t dividend, int32_t divisor)
 
 void lv_grid_init(void)
 {
-    layout_list_def[LV_LAYOUT_GRID].cb = grid_update;
+    layout_list_def[LV_LAYOUT_GRID].callbacks.layout_update_cb = grid_update;
+    layout_list_def[LV_LAYOUT_GRID].callbacks.get_min_size_cb = NULL;
     layout_list_def[LV_LAYOUT_GRID].user_data = NULL;
 }
 
 void lv_obj_set_grid_dsc_array(lv_obj_t * obj, const int32_t col_dsc[], const int32_t row_dsc[])
 {
+    LV_CHECK_OBJ(obj, &lv_obj_class, return);
+
     lv_obj_set_style_grid_column_dsc_array(obj, col_dsc, 0);
     lv_obj_set_style_grid_row_dsc_array(obj, row_dsc, 0);
     lv_obj_set_style_layout(obj, LV_LAYOUT_GRID, 0);
@@ -156,21 +172,29 @@ void lv_obj_set_grid_dsc_array(lv_obj_t * obj, const int32_t col_dsc[], const in
 
 void lv_obj_set_grid_align(lv_obj_t * obj, lv_grid_align_t column_align, lv_grid_align_t row_align)
 {
+    LV_CHECK_OBJ(obj, &lv_obj_class, return);
+    LV_CHECK_ARG(column_align != LV_GRID_ALIGN_STRETCH, return,
+                 "LV_GRID_ALIGN_STRETCH is not supported for column tracks");
+    LV_CHECK_ARG(row_align != LV_GRID_ALIGN_STRETCH, return,
+                 "LV_GRID_ALIGN_STRETCH is not supported for row tracks");
+
     lv_obj_set_style_grid_column_align(obj, column_align, 0);
     lv_obj_set_style_grid_row_align(obj, row_align, 0);
 
 }
 
-void lv_obj_set_grid_cell(lv_obj_t * obj, lv_grid_align_t x_align, int32_t col_pos, int32_t col_span,
-                          lv_grid_align_t y_align, int32_t row_pos, int32_t row_span)
+void lv_obj_set_grid_cell(lv_obj_t * obj, lv_grid_align_t column_align, int32_t col_pos, int32_t col_span,
+                          lv_grid_align_t row_align, int32_t row_pos, int32_t row_span)
 
 {
+    LV_CHECK_OBJ(obj, &lv_obj_class, return);
+
     lv_obj_set_style_grid_cell_column_pos(obj, col_pos, 0);
     lv_obj_set_style_grid_cell_row_pos(obj, row_pos, 0);
-    lv_obj_set_style_grid_cell_x_align(obj, x_align, 0);
+    lv_obj_set_style_grid_cell_x_align(obj, column_align, 0);
     lv_obj_set_style_grid_cell_column_span(obj, col_span, 0);
     lv_obj_set_style_grid_cell_row_span(obj, row_span, 0);
-    lv_obj_set_style_grid_cell_y_align(obj, y_align, 0);
+    lv_obj_set_style_grid_cell_y_align(obj, row_align, 0);
 
     lv_obj_mark_layout_as_dirty(lv_obj_get_parent(obj));
 }
@@ -186,15 +210,16 @@ int32_t lv_grid_fr(uint8_t x)
 
 static void grid_update(lv_obj_t * cont, void * user_data)
 {
+    LV_ASSERT(cont != NULL);
     LV_LOG_INFO("update %p container", (void *)cont);
     LV_UNUSED(user_data);
 
-    //    const int32_t * col_templ = get_col_dsc(cont);
-    //    const int32_t * row_templ = get_row_dsc(cont);
-    //    if(col_templ == NULL || row_templ == NULL) return;
-
     lv_grid_calc_t c;
-    calc(cont, &c);
+    lv_result_t res = calc(cont, &c);
+    if(res != LV_RESULT_OK) {
+        calc_free(&c);
+        return;
+    }
 
     item_repos_hint_t hint;
     lv_memzero(&hint, sizeof(hint));
@@ -227,18 +252,26 @@ static void grid_update(lv_obj_t * cont, void * user_data)
 /**
  * Calculate the grid cells coordinates
  * @param cont an object that has a grid
- * @param calc store the calculated cells sizes here
+ * @param calc_out store the calculated cells sizes here
  * @note `lv_grid_calc_free(calc_out)` needs to be called when `calc_out` is not needed anymore
  */
-static void calc(lv_obj_t * cont, lv_grid_calc_t * calc_out)
+static lv_result_t calc(lv_obj_t * cont, lv_grid_calc_t * calc_out)
 {
+    LV_ASSERT(cont != NULL);
+    LV_ASSERT(calc_out != NULL);
+    lv_memzero(calc_out, sizeof(lv_grid_calc_t));
     if(lv_obj_get_child(cont, 0) == NULL) {
-        lv_memzero(calc_out, sizeof(lv_grid_calc_t));
-        return;
+        return LV_RESULT_INVALID;
     }
 
-    calc_rows(cont, calc_out);
-    calc_cols(cont, calc_out);
+    if(calc_rows(cont, calc_out) == LV_RESULT_INVALID) {
+        /* Warning is already logged inside `calc_rows` */
+        return LV_RESULT_INVALID;
+    }
+    if(calc_cols(cont, calc_out) == LV_RESULT_INVALID) {
+        /* Warning is already logged inside `calc_cols` */
+        return LV_RESULT_INVALID;
+    }
 
     int32_t col_gap = lv_obj_get_style_pad_column(cont, LV_PART_MAIN);
     int32_t row_gap = lv_obj_get_style_pad_row(cont, LV_PART_MAIN);
@@ -258,6 +291,7 @@ static void calc(lv_obj_t * cont, lv_grid_calc_t * calc_out)
                                   calc_out->y, false);
 
     LV_ASSERT_MEM_INTEGRITY();
+    return LV_RESULT_OK;
 }
 
 /**
@@ -266,24 +300,33 @@ static void calc(lv_obj_t * cont, lv_grid_calc_t * calc_out)
  */
 static void calc_free(lv_grid_calc_t * calc)
 {
+    LV_ASSERT(calc != NULL);
     lv_free(calc->x);
     lv_free(calc->y);
     lv_free(calc->w);
     lv_free(calc->h);
 }
 
-static void calc_cols(lv_obj_t * cont, lv_grid_calc_t * c)
+static lv_result_t calc_cols(lv_obj_t * cont, lv_grid_calc_t * c)
 {
-
+    LV_ASSERT(cont != NULL);
+    LV_ASSERT(c != NULL);
     const int32_t * col_templ;
     col_templ = get_col_dsc(cont);
+
+    /*If there is no descriptor check if it's a subgrid*/
     bool subgrid = false;
     if(col_templ == NULL) {
         lv_obj_t * parent = lv_obj_get_parent(cont);
+        if(parent == NULL) {
+            LV_LOG_WARN("No column descriptor, and there is no parent for a screen to process subgrid");
+            return LV_RESULT_INVALID;
+        }
+
         col_templ = get_col_dsc(parent);
         if(col_templ == NULL) {
-            LV_LOG_WARN("No col descriptor found even on the parent");
-            return;
+            LV_LOG_WARN("No column descriptor found even on the parent");
+            return LV_RESULT_INVALID;
         }
 
         int32_t pos = get_col_pos(cont);
@@ -311,7 +354,7 @@ static void calc_cols(lv_obj_t * cont, lv_grid_calc_t * c)
             uint32_t ci;
             for(ci = 0; ci < lv_obj_get_child_count(cont); ci++) {
                 lv_obj_t * item = lv_obj_get_child(cont, ci);
-                if(lv_obj_has_flag_any(item, LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_FLOATING)) continue;
+                if((lv_obj_is_ignore_layout(item) || lv_obj_is_hidden(item) || lv_obj_is_floating(item))) continue;
                 uint32_t col_span = get_col_span(item);
                 if(col_span != 1) continue;
 
@@ -351,7 +394,7 @@ static void calc_cols(lv_obj_t * cont, lv_grid_calc_t * c)
         int32_t x = col_templ[i];
         if(IS_FR(x)) {
             int32_t f = GET_FR(x);
-            c->w[i] = div_round_closest(free_w * f, col_fr_cnt);
+            c->w[i] = lv_div_round_closest(free_w * f, col_fr_cnt);
             /*By updating remaining fr and width, we ensure f == col_fr_cnt
              *in the last loop iteration. That means the last iteration will
              *not have rounding errors and use all remaining space.*/
@@ -363,19 +406,29 @@ static void calc_cols(lv_obj_t * cont, lv_grid_calc_t * c)
     if(subgrid) {
         lv_free((void *)col_templ);
     }
+    return LV_RESULT_OK;
 }
 
-static void calc_rows(lv_obj_t * cont, lv_grid_calc_t * c)
+static lv_result_t calc_rows(lv_obj_t * cont, lv_grid_calc_t * c)
 {
+    LV_ASSERT(cont != NULL);
+    LV_ASSERT(c != NULL);
     const int32_t * row_templ;
     row_templ = get_row_dsc(cont);
+
+    /*If there is no descriptor check if it's a subgrid*/
     bool subgrid = false;
     if(row_templ == NULL) {
         lv_obj_t * parent = lv_obj_get_parent(cont);
+        if(parent == NULL) {
+            LV_LOG_WARN("No row descriptor, and there is no parent for a screen to process subgrid");
+            return LV_RESULT_INVALID;
+        }
+
         row_templ = get_row_dsc(parent);
         if(row_templ == NULL) {
             LV_LOG_WARN("No row descriptor found even on the parent");
-            return;
+            return LV_RESULT_INVALID;
         }
 
         int32_t pos = get_row_pos(cont);
@@ -400,7 +453,7 @@ static void calc_rows(lv_obj_t * cont, lv_grid_calc_t * c)
             uint32_t ci;
             for(ci = 0; ci < lv_obj_get_child_count(cont); ci++) {
                 lv_obj_t * item = lv_obj_get_child(cont, ci);
-                if(lv_obj_has_flag_any(item, LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_FLOATING)) continue;
+                if((lv_obj_is_ignore_layout(item) || lv_obj_is_hidden(item) || lv_obj_is_floating(item))) continue;
                 uint32_t row_span = get_row_span(item);
                 if(row_span != 1) continue;
 
@@ -440,7 +493,7 @@ static void calc_rows(lv_obj_t * cont, lv_grid_calc_t * c)
         int32_t x = row_templ[i];
         if(IS_FR(x)) {
             int32_t f = GET_FR(x);
-            c->h[i] = div_round_closest(free_h * f, row_fr_cnt);
+            c->h[i] = lv_div_round_closest(free_h * f, row_fr_cnt);
             /*By updating remaining fr and height, we ensure f == row_fr_cnt
              *in the last loop iteration. That means the last iteration will
              *not have rounding errors and use all remaining space.*/
@@ -452,30 +505,86 @@ static void calc_rows(lv_obj_t * cont, lv_grid_calc_t * c)
     if(subgrid) {
         lv_free((void *)row_templ);
     }
+    return LV_RESULT_OK;
 }
 
 /**
  * Reposition a grid item in its cell
  * @param item a grid item to reposition
- * @param calc the calculated grid of `cont`
- * @param child_id_ext helper value if the ID of the child is know (order from the oldest) else -1
- * @param grid_abs helper value, the absolute position of the grid, NULL if unknown
+ * @param c the calculated grid of the container
+ * @param hint helper values cached across the items of the same container
  */
 static void item_repos(lv_obj_t * item, lv_grid_calc_t * c, item_repos_hint_t * hint)
 {
-    if(lv_obj_has_flag_any(item, LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_FLOATING)) return;
-    uint32_t col_span = get_col_span(item);
-    uint32_t row_span = get_row_span(item);
-    if(row_span == 0 || col_span == 0) return;
+    LV_ASSERT(c != NULL);
+    LV_ASSERT(item != NULL);
+    LV_ASSERT(hint != NULL);
 
-    uint32_t col_pos = get_col_pos(item);
-    uint32_t row_pos = get_row_pos(item);
+    if(lv_obj_is_ignore_layout(item) || lv_obj_is_hidden(item) || lv_obj_is_floating(item)) return;
+
+    int32_t col_span = get_col_span(item);
+    if(col_span <= 0) {
+        LV_LOG_WARN("Column span was %" LV_PRId32 ", setting it to 1", col_span);
+        col_span = 1;
+    }
+
+    int32_t row_span = get_row_span(item);
+    if(row_span <= 0) {
+        LV_LOG_WARN("Row span was %" LV_PRId32 ", setting it to 1", row_span);
+        row_span = 1;
+    }
+
+    bool rev = lv_obj_get_style_base_dir(lv_obj_get_parent(item), LV_PART_MAIN) == LV_BASE_DIR_RTL;
+
+    int32_t col_pos = get_col_pos(item);
+    if(col_pos < 0) {
+        LV_LOG_WARN("Column position was %" LV_PRId32 ", setting it to 0", col_pos);
+        col_pos = 0;
+    }
+
+    if(col_pos >= (int32_t)c->col_num) {
+        LV_LOG_WARN("Column position was %" LV_PRId32 ", setting to %" LV_PRId32, col_pos, c->col_num - 1);
+        col_pos = c->col_num - 1;
+    }
+
+    int32_t row_pos = get_row_pos(item);
+    if(row_pos < 0) {
+        LV_LOG_WARN("Row position was %" LV_PRId32 ", setting it to 0", row_pos);
+        row_pos = 0;
+    }
+
+    if(row_pos >= (int32_t)c->row_num) {
+        LV_LOG_WARN("Row position was %" LV_PRId32 ", setting to %" LV_PRId32, row_pos, c->row_num - 1);
+        row_pos = c->row_num - 1;
+    }
+
+    if(col_pos + col_span > (int32_t)c->col_num) {
+        col_span = c->col_num - col_pos;
+        LV_LOG_WARN("Column span is too large, limiting it to %" LV_PRId32, col_span);
+    }
+
+    if(row_pos + row_span > (int32_t)c->row_num) {
+        row_span = c->row_num - row_pos;
+        LV_LOG_WARN("Row span is too large, limiting it to %" LV_PRId32, row_span);
+    }
+
     lv_grid_align_t col_align = get_cell_col_align(item);
     lv_grid_align_t row_align = get_cell_row_align(item);
 
-    int32_t col_x1 = c->x[col_pos];
-    int32_t col_x2 = c->x[col_pos + col_span - 1] + c->w[col_pos + col_span - 1];
-    int32_t col_w = col_x2 - col_x1;
+    int32_t col_x1 = 0;
+    int32_t col_x2 = 0;
+    int32_t col_w = 0;
+
+    if(rev && col_span > 1) {
+        col_x1 = c->x[col_pos + col_span - 1];
+        col_x2 = c->x[col_pos] + c->w[col_pos];
+        col_w = col_x2 - col_x1;
+    }
+    else {
+        col_x1 = c->x[col_pos];
+        col_x2 = c->x[col_pos + col_span - 1] + c->w[col_pos + col_span - 1];
+        col_w = col_x2 - col_x1;
+    }
 
     int32_t row_y1 = c->y[row_pos];
     int32_t row_y2 = c->y[row_pos + row_span - 1] + c->h[row_pos + row_span - 1];
@@ -491,6 +600,8 @@ static void item_repos(lv_obj_t * item, lv_grid_calc_t * c, item_repos_hint_t * 
     int32_t y;
     int32_t item_w = lv_area_get_width(&item->coords);
     int32_t item_h = lv_area_get_height(&item->coords);
+
+    col_pos = rev && col_span > 1 ? col_pos + col_span - 1 : col_pos;
 
     switch(col_align) {
         default:
@@ -589,6 +700,8 @@ static int32_t grid_align(int32_t cont_size,  bool auto_size, lv_grid_align_t al
                           uint32_t track_num,
                           int32_t * size_array, int32_t * pos_array, bool reverse)
 {
+    LV_ASSERT(size_array != NULL);
+    LV_ASSERT(pos_array != NULL);
     int32_t grid_size = 0;
     uint32_t i;
 
@@ -610,6 +723,7 @@ static int32_t grid_align(int32_t cont_size,  bool auto_size, lv_grid_align_t al
 
         /*Calculate the position of the first item and set gap is necessary*/
         switch(align) {
+            case LV_GRID_ALIGN_STRETCH: /*Not supported for tracks, fall back to START*/
             case LV_GRID_ALIGN_START:
                 pos_array[0] = 0;
                 break;
@@ -630,8 +744,6 @@ static int32_t grid_align(int32_t cont_size,  bool auto_size, lv_grid_align_t al
             case LV_GRID_ALIGN_SPACE_EVENLY:
                 gap = (int32_t)(cont_size - grid_size) / (int32_t)(track_num + 1);
                 pos_array[0] = gap;
-                break;
-            default:
                 break;
         }
     }
@@ -656,6 +768,7 @@ static int32_t grid_align(int32_t cont_size,  bool auto_size, lv_grid_align_t al
 
 static uint32_t count_tracks(const int32_t * templ)
 {
+    LV_ASSERT(templ != NULL);
     uint32_t i;
     for(i = 0; templ[i] != LV_GRID_TEMPLATE_LAST; i++);
 

@@ -15,9 +15,9 @@ extern "C" {
  *********************/
 
 #include "../image/lv_image_private.h"
-#include "lv_canvas.h"
+#include "../../lvgl_public.h"
 
-#if LV_USE_CANVAS != 0
+#if LV_USE_CANVAS
 
 /*********************
  *      DEFINES
@@ -28,7 +28,7 @@ extern "C" {
  **********************/
 
 /** Canvas data */
-struct lv_canvas_t {
+struct _lv_canvas_t {
     lv_image_t img;
     lv_draw_buf_t * draw_buf;
     lv_draw_buf_t static_buf;

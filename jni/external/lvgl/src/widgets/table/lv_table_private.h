@@ -14,10 +14,10 @@ extern "C" {
  *      INCLUDES
  *********************/
 
-#include "lv_table.h"
-
-#if LV_USE_TABLE != 0
 #include "../../core/lv_obj_private.h"
+#include "../../lvgl_public.h"
+
+#if LV_USE_TABLE
 
 /*********************
  *      DEFINES
@@ -28,14 +28,14 @@ extern "C" {
  **********************/
 
 /** Cell data */
-struct lv_table_cell_t {
+struct _lv_table_cell_t {
     lv_table_cell_ctrl_t ctrl;
     void * user_data; /**< Custom user data */
     char txt[1];      /**< Variable length array */
 };
 
 /** Table data */
-struct lv_table_t {
+struct _lv_table_t {
     lv_obj_t obj;
     uint32_t col_cnt;
     uint32_t row_cnt;

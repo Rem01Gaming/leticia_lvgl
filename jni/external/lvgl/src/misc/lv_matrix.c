@@ -7,13 +7,13 @@
  *      INCLUDES
  *********************/
 
-#include "lv_matrix.h"
+#include "../lvgl_public.h"
 
 #if LV_USE_MATRIX
 
-#include "../stdlib/lv_string.h"
-#include "lv_math.h"
 #include <math.h>
+#include <float.h>
+
 /*********************
  *      DEFINES
  *********************/
@@ -43,6 +43,7 @@
 
 void lv_matrix_identity(lv_matrix_t * matrix)
 {
+    LV_CHECK_ARG(matrix != NULL, return);
     matrix->m[0][0] = 1.0f;
     matrix->m[0][1] = 0.0f;
     matrix->m[0][2] = 0.0f;
@@ -54,18 +55,19 @@ void lv_matrix_identity(lv_matrix_t * matrix)
     matrix->m[2][2] = 1.0f;
 }
 
-void lv_matrix_translate(lv_matrix_t * matrix, float dx, float dy)
+void lv_matrix_translate(lv_matrix_t * matrix, float tx, float ty)
 {
+    LV_CHECK_ARG(matrix != NULL, return);
     if(lv_matrix_is_identity_or_translation(matrix)) {
         /*optimization for matrix translation.*/
-        matrix->m[0][2] += dx;
-        matrix->m[1][2] += dy;
+        matrix->m[0][2] += tx;
+        matrix->m[1][2] += ty;
         return;
     }
 
     lv_matrix_t tlm = {{
-            {1.0f, 0.0f, dx},
-            {0.0f, 1.0f, dy},
+            {1.0f, 0.0f, tx},
+            {0.0f, 1.0f, ty},
             {0.0f, 0.0f, 1.0f},
         }
     };
@@ -75,6 +77,7 @@ void lv_matrix_translate(lv_matrix_t * matrix, float dx, float dy)
 
 void lv_matrix_scale(lv_matrix_t * matrix, float scale_x, float scale_y)
 {
+    LV_CHECK_ARG(matrix != NULL, return);
     lv_matrix_t scm = {{
             {scale_x, 0.0f, 0.0f},
             {0.0f, scale_y, 0.0f},
@@ -87,6 +90,7 @@ void lv_matrix_scale(lv_matrix_t * matrix, float scale_x, float scale_y)
 
 void lv_matrix_rotate(lv_matrix_t * matrix, float degree)
 {
+    LV_CHECK_ARG(matrix != NULL, return);
     float radian = degree / 180.0f * (float)M_PI;
     float cos_r = cosf(radian);
     float sin_r = sinf(radian);
@@ -103,6 +107,7 @@ void lv_matrix_rotate(lv_matrix_t * matrix, float degree)
 
 void lv_matrix_skew(lv_matrix_t * matrix, float skew_x, float skew_y)
 {
+    LV_CHECK_ARG(matrix != NULL, return);
     float rskew_x = skew_x / 180.0f * (float)M_PI;
     float rskew_y = skew_y / 180.0f * (float)M_PI;
     float tan_x = tanf(rskew_x);
@@ -120,6 +125,8 @@ void lv_matrix_skew(lv_matrix_t * matrix, float skew_x, float skew_y)
 
 void lv_matrix_multiply(lv_matrix_t * matrix, const lv_matrix_t * mul)
 {
+    LV_CHECK_ARG(matrix != NULL, return);
+    LV_CHECK_ARG(mul != NULL, return);
     /*TODO: use NEON to optimize this function on ARM architecture.*/
     lv_matrix_t tmp;
 
@@ -136,6 +143,7 @@ void lv_matrix_multiply(lv_matrix_t * matrix, const lv_matrix_t * mul)
 
 bool lv_matrix_inverse(lv_matrix_t * matrix, const lv_matrix_t * m)
 {
+    LV_CHECK_ARG(matrix != NULL, return false);
     float det00, det01, det02;
     float d;
     bool is_affine;
@@ -179,20 +187,50 @@ bool lv_matrix_inverse(lv_matrix_t * matrix, const lv_matrix_t * m)
 
 lv_point_precise_t lv_matrix_transform_precise_point(const lv_matrix_t * matrix, const lv_point_precise_t * point)
 {
+    LV_CHECK_ARG(matrix != NULL, return (lv_point_precise_t) {
+        0
+    });
+    LV_CHECK_ARG(point != NULL, return (lv_point_precise_t) {
+        0
+    });
     lv_point_precise_t p;
-    p.x = (lv_value_precise_t)roundf(point->x * matrix->m[0][0] + point->y * matrix->m[0][1] + matrix->m[0][2]);
-    p.y = (lv_value_precise_t)roundf(point->x * matrix->m[1][0] + point->y * matrix->m[1][1] + matrix->m[1][2]);
+    lv_value_precise_t w = point->x * matrix->m[2][0] + point->y * matrix->m[2][1] + matrix->m[2][2];
+    if(LV_ABS(w) < FLT_EPSILON) {
+        LV_LOG_ERROR("matrix is invalid");
+        p.x = 0;
+        p.y = 0;
+    }
+    else {
+        lv_value_precise_t inv_w = 1.0f / w;
+        p.x = (lv_value_precise_t)roundf((point->x * matrix->m[0][0] + point->y * matrix->m[0][1] + matrix->m[0][2]) * inv_w);
+        p.y = (lv_value_precise_t)roundf((point->x * matrix->m[1][0] + point->y * matrix->m[1][1] + matrix->m[1][2]) * inv_w);
+    }
     return p;
 }
 
 lv_area_t lv_matrix_transform_area(const lv_matrix_t * matrix, const lv_area_t * area)
 {
+    LV_CHECK_ARG(matrix != NULL, return (lv_area_t) {
+        0
+    });
+    LV_CHECK_ARG(area != NULL, return (lv_area_t) {
+        0
+    });
+    if(lv_matrix_is_identity(matrix)) {
+        return *area;
+    }
+
+    /**
+     * Since lv_area_t will subtract 1px when calculating width and height,
+     * this will affect the matrix transformation calculation, so +1px is needed as compensation,
+     * and the compensation value is subtracted after the calculation is completed
+     */
     lv_area_t res;
     lv_point_precise_t p[4] = {
         {area->x1, area->y1},
-        {area->x1, area->y2},
-        {area->x2, area->y1},
-        {area->x2, area->y2},
+        {area->x1, area->y2 + 1},
+        {area->x2 + 1, area->y1},
+        {area->x2 + 1, area->y2 + 1},
     };
     p[0] = lv_matrix_transform_precise_point(matrix, &p[0]);
     p[1] = lv_matrix_transform_precise_point(matrix, &p[1]);
@@ -200,15 +238,22 @@ lv_area_t lv_matrix_transform_area(const lv_matrix_t * matrix, const lv_area_t *
     p[3] = lv_matrix_transform_precise_point(matrix, &p[3]);
 
     res.x1 = (int32_t)(LV_MIN4(p[0].x, p[1].x, p[2].x, p[3].x));
-    res.x2 = (int32_t)(LV_MAX4(p[0].x, p[1].x, p[2].x, p[3].x));
+    res.x2 = (int32_t)(LV_MAX4(p[0].x, p[1].x, p[2].x, p[3].x)) - 1;
     res.y1 = (int32_t)(LV_MIN4(p[0].y, p[1].y, p[2].y, p[3].y));
-    res.y2 = (int32_t)(LV_MAX4(p[0].y, p[1].y, p[2].y, p[3].y));
+    res.y2 = (int32_t)(LV_MAX4(p[0].y, p[1].y, p[2].y, p[3].y)) - 1;
 
     return res;
 }
 
+bool lv_matrix_is_identity(const lv_matrix_t * matrix)
+{
+    LV_CHECK_ARG(matrix != NULL, return false);
+    return (matrix->m[0][2] == 0.0f && matrix->m[1][2] == 0.0f && lv_matrix_is_identity_or_translation(matrix));
+}
+
 bool lv_matrix_is_identity_or_translation(const lv_matrix_t * matrix)
 {
+    LV_CHECK_ARG(matrix != NULL, return false);
     return (matrix->m[0][0] == 1.0f &&
             matrix->m[0][1] == 0.0f &&
             matrix->m[1][0] == 0.0f &&
@@ -216,6 +261,42 @@ bool lv_matrix_is_identity_or_translation(const lv_matrix_t * matrix)
             matrix->m[2][0] == 0.0f &&
             matrix->m[2][1] == 0.0f &&
             matrix->m[2][2] == 1.0f);
+}
+
+void lv_matrix_transpose(const lv_matrix_t * src, lv_matrix_t * dst)
+{
+    LV_CHECK_ARG(src != NULL, return);
+    LV_CHECK_ARG(dst != NULL, return);
+
+    if(src == dst) {
+        /* In-place transposition: 3 swaps, minimal stack usage */
+        float tmp;
+
+        tmp = dst->m[0][1];
+        dst->m[0][1] = dst->m[1][0];
+        dst->m[1][0] = tmp;
+
+        tmp = dst->m[0][2];
+        dst->m[0][2] = dst->m[2][0];
+        dst->m[2][0] = tmp;
+
+        tmp = dst->m[1][2];
+        dst->m[1][2] = dst->m[2][1];
+        dst->m[2][1] = tmp;
+    }
+    else {
+        dst->m[0][0] = src->m[0][0];
+        dst->m[0][1] = src->m[1][0];
+        dst->m[0][2] = src->m[2][0];
+
+        dst->m[1][0] = src->m[0][1];
+        dst->m[1][1] = src->m[1][1];
+        dst->m[1][2] = src->m[2][1];
+
+        dst->m[2][0] = src->m[0][2];
+        dst->m[2][1] = src->m[1][2];
+        dst->m[2][2] = src->m[2][2];
+    }
 }
 
 /**********************
