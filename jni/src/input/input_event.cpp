@@ -194,7 +194,7 @@ void input_event_monitor::poll_key_source(int fd) {
     }
 
     if (n < 0 && errno != EAGAIN){
-        perror("input_event_monitor: read");
+        Leticia::ui_print("input_event_monitor: read failed: %s", strerror(errno));
     }
 }
 

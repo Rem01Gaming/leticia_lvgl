@@ -149,13 +149,13 @@ void parse_ini(const std::string &text, device_config_t &out) {
 bool run_unzip_extract(const std::string &zip_path, const char *entry_name, std::string &out) {
     int pipe_fd[2];
     if (pipe(pipe_fd) != 0) {
-        perror("device_config: pipe");
+        Leticia::ui_print("device_config: failed to create pipe: %s", strerror(errno));
         return false;
     }
 
     pid_t pid = fork();
     if (pid < 0) {
-        perror("device_config: fork");
+        Leticia::ui_print("device_config: fork failed: %s", strerror(errno));
         close(pipe_fd[0]);
         close(pipe_fd[1]);
         return false;
@@ -195,7 +195,7 @@ bool run_unzip_extract(const std::string &zip_path, const char *entry_name, std:
 
     int status = 0;
     if (waitpid(pid, &status, 0) < 0) {
-        perror("device_config: waitpid");
+        Leticia::ui_print("device_config: waitpid failed: %s", strerror(errno));
         return false;
     }
 

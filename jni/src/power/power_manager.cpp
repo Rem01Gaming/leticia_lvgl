@@ -79,7 +79,7 @@ bool power_manager::set_display_blank(bool blank) {
             Leticia::ui_print("ioctl blanking %s", blank ? "OFF" : "ON");
             return true;
         }
-        perror("ioctl(FBIOBLANK)");
+        Leticia::ui_print("set_display_blank: ioctl blanking %s failed: %s", blank ? "OFF" : "ON", strerror(errno));
     }
 
     if (set_display_blank_sysfs(blank))
@@ -100,11 +100,11 @@ void power_manager::blank_framebuffer_pixels() {
     struct fb_fix_screeninfo finfo;
 
     if (ioctl(fb_fd_, FBIOGET_VSCREENINFO, &vinfo) != 0) {
-        perror("blank_framebuffer_pixels: FBIOGET_VSCREENINFO");
+        Leticia::ui_print("blank_framebuffer_pixels: FBIOGET_VSCREENINFO failed: %s", strerror(errno));
         return;
     }
     if (ioctl(fb_fd_, FBIOGET_FSCREENINFO, &finfo) != 0) {
-        perror("blank_framebuffer_pixels: FBIOGET_FSCREENINFO");
+        Leticia::ui_print("blank_framebuffer_pixels: FBIOGET_FSCREENINFO failed: %s", strerror(errno));
         return;
     }
 
@@ -117,7 +117,7 @@ void power_manager::blank_framebuffer_pixels() {
 
     void *mem = mmap(nullptr, screensize, PROT_WRITE, MAP_SHARED, fb_fd_, 0);
     if (mem == MAP_FAILED) {
-        perror("blank_framebuffer_pixels: mmap");
+        Leticia::ui_print("blank_framebuffer_pixels: mmap failed: %s", strerror(errno));
         return;
     }
 
@@ -131,7 +131,7 @@ bool power_manager::find_backlight() {
     if (device_config_.configured()) {
         int fd = open(device_config_.backlight_path.c_str(), O_WRONLY);
         if (fd < 0) {
-            perror("device_config backlight_path: open");
+            Leticia::ui_print("device_config backlight_path: open failed: %s", strerror(errno));
         } else {
             close(fd);
             backlight_path_ = device_config_.backlight_path;
@@ -233,7 +233,7 @@ void power_manager::write_brightness_percent(int percent) {
 
     int fd = open(backlight_path_.c_str(), O_WRONLY);
     if (fd < 0) {
-        perror("write_brightness_percent: open");
+        Leticia::ui_print("write_brightness_percent: open failed: %s", strerror(errno));
         return;
     }
 
@@ -243,7 +243,7 @@ void power_manager::write_brightness_percent(int percent) {
     close(fd);
 
     if (written != len) {
-        perror("write_brightness_percent: write");
+        Leticia::ui_print("write_brightness_percent: write failed: %s", strerror(errno));
         return;
     }
 
