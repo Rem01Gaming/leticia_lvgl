@@ -1,7 +1,9 @@
 #include <atomic>
+#include <cerrno>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <unistd.h>
 #include <pthread.h>
@@ -12,7 +14,9 @@
 
 #include "audio/audio_manager.hpp"
 #include "config/device_config.hpp"
+#include "gui/screens/main_screen.hpp"
 #include "gui/ui_scale.hpp"
+#include "gui/units.hpp"
 #include "input/safety_exit.hpp"
 #include "input/touch_probe.hpp"
 #include "power/power_manager.hpp"
@@ -25,11 +29,6 @@ std::atomic<bool> g_should_exit{false};
 
 void request_exit(int signum) {
     (void)signum;
-    g_should_exit.store(true, std::memory_order_relaxed);
-}
-
-void exit_btn_event_cb(lv_event_t *e) {
-    (void)e;
     g_should_exit.store(true, std::memory_order_relaxed);
 }
 
@@ -56,40 +55,6 @@ void lvgl_log_cb(lv_log_level_t level, const char *buf) {
 void safety_exit_cb() {
     Leticia::ui_print("Safety exit long-press triggered, closing UI");
     g_should_exit.store(true, std::memory_order_relaxed);
-}
-
-/**
- * @brief Handles user activity events to reset timers and wake the display.
- *
- * @param e LVGL event pointer.
- */
-void user_activity_event_cb(lv_event_t *e) {
-    auto *power = static_cast<Leticia::power_manager *>(lv_event_get_user_data(e));
-
-    Leticia::power_state state = power->get_state();
-    if (state == Leticia::power_state::sleep || state == Leticia::power_state::dimmed)
-        power->set_state(Leticia::power_state::on);
-
-    power->reset_activity_timer();
-}
-
-/**
- * @brief Toggles the test tone and updates the UI button.
- *
- * @param e LVGL event pointer.
- */
-void audio_toggle_btn_event_cb(lv_event_t *e) {
-    auto *audio = static_cast<Leticia::audio_manager *>(lv_event_get_user_data(e));
-    auto *btn = static_cast<lv_obj_t *>(lv_event_get_target(e));
-    lv_obj_t *btn_label = lv_obj_get_child(btn, 0);
-
-    if (!audio->is_available()) {
-        lv_label_set_text(btn_label, "Audio Unavailable");
-        return;
-    }
-
-    bool playing = audio->toggle_test_tone();
-    lv_label_set_text(btn_label, playing ? "Stop 1kHz Sine" : "Play 1kHz Sine");
 }
 
 /**
@@ -189,46 +154,17 @@ void apply_lvgl_cpu_affinity(const std::vector<int> &cpus) {
 }
 
 /**
- * @brief Builds the user interface.
+ * @brief Sets the display DPI and derives the dp/sp density used by every screen.
  *
  * @param disp LVGL display pointer.
- * @param power Power manager instance.
- * @param audio Audio manager instance.
  */
-void build_ui(lv_display_t *disp, Leticia::power_manager &power, Leticia::audio_manager &audio) {
+void apply_display_density(lv_display_t *disp) {
     int32_t hor_res = lv_display_get_horizontal_resolution(disp);
     int32_t ver_res = lv_display_get_vertical_resolution(disp);
 
     int dpi = Leticia::ui_scale::estimate_dpi(hor_res, ver_res);
     lv_display_set_dpi(disp, dpi);
-
-    float scale = Leticia::ui_scale::factor(dpi);
-
-    lv_obj_t *scr = lv_screen_active();
-
-    lv_obj_t *audio_btn = lv_button_create(scr);
-    lv_obj_set_size(audio_btn, static_cast<int>(260 * scale), static_cast<int>(90 * scale));
-    lv_obj_align(audio_btn, LV_ALIGN_CENTER, 0, static_cast<int>(-60 * scale));
-    lv_obj_add_event_cb(audio_btn, audio_toggle_btn_event_cb, LV_EVENT_CLICKED, &audio);
-    lv_obj_add_event_cb(audio_btn, user_activity_event_cb, LV_EVENT_ALL, &power);
-
-    lv_obj_t *audio_btn_label = lv_label_create(audio_btn);
-    lv_label_set_text(audio_btn_label, audio.is_available() ? "Play 1kHz Sine" : "Audio Unavailable");
-    lv_obj_set_style_text_font(audio_btn_label, Leticia::ui_scale::pick_font(static_cast<int>(24 * scale)), 0);
-    lv_obj_center(audio_btn_label);
-
-    lv_obj_t *btn = lv_button_create(scr);
-    lv_obj_set_size(btn, static_cast<int>(220 * scale), static_cast<int>(90 * scale));
-    lv_obj_align(btn, LV_ALIGN_CENTER, 0, static_cast<int>(80 * scale));
-    lv_obj_add_event_cb(btn, exit_btn_event_cb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_add_event_cb(btn, user_activity_event_cb, LV_EVENT_ALL, &power);
-
-    lv_obj_t *btn_label = lv_label_create(btn);
-    lv_label_set_text(btn_label, "Exit");
-    lv_obj_set_style_text_font(btn_label, Leticia::ui_scale::pick_font(static_cast<int>(24 * scale)), 0);
-    lv_obj_center(btn_label);
-
-    lv_obj_add_event_cb(scr, user_activity_event_cb, LV_EVENT_ALL, &power);
+    Leticia::units::init(dpi);
 }
 
 } // namespace
@@ -282,8 +218,10 @@ int main(int argc, char *argv[]) {
 
     apply_lvgl_cpu_affinity(device_config.lvgl_thread_affinity);
 
+    apply_display_density(disp);
+
     Leticia::power_manager power;
-    build_ui(disp, power, audio);
+    Leticia::screens::build_main_screen(audio, power, g_should_exit);
 
     power.init(disp, device_config);
     power.set_touch_indev(indev);

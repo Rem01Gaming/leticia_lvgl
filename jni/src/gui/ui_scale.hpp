@@ -14,14 +14,6 @@ namespace Leticia::ui_scale {
 int estimate_dpi(int32_t hor_res, int32_t ver_res);
 
 /**
- * @brief Calculates a scale factor based on DPI.
- *
- * @param dpi The panel DPI.
- * @return Calculated scale factor.
- */
-float factor(int dpi);
-
-/**
  * @brief Picks a font closest to the target pixel size.
  *
  * @param target_px Target pixel size.

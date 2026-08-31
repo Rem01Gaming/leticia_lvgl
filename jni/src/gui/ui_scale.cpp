@@ -5,10 +5,6 @@
 
 namespace Leticia::ui_scale {
 
-namespace {
-constexpr int kBaselineDpi = 400;
-}
-
 int estimate_dpi(int32_t hor_res, int32_t ver_res) {
     int32_t shortest_side = hor_res < ver_res ? hor_res : ver_res;
     int dpi = (shortest_side / 160) * 80;
@@ -17,17 +13,6 @@ int estimate_dpi(int32_t hor_res, int32_t ver_res) {
         dpi = 160;
 
     return dpi;
-}
-
-float factor(int dpi) {
-    float scale = static_cast<float>(dpi) / static_cast<float>(kBaselineDpi);
-
-    if (scale < 1.0f)
-        scale = 1.0f;
-    if (scale > 4.0f)
-        scale = 4.0f;
-
-    return scale;
 }
 
 const lv_font_t *pick_font(int target_px) {
