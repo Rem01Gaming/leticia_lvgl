@@ -177,8 +177,12 @@ public:
  */
 class button final : public widget {
 public:
-    explicit button(widget &parent) : widget(lv_button_create(parent.raw())) {}
-    explicit button(lv_obj_t *parent) : widget(lv_button_create(parent)) {}
+    explicit button(widget &parent) : widget(lv_button_create(parent.raw())) {
+        lv_obj_set_press_lock(obj_, false);
+    }
+    explicit button(lv_obj_t *parent) : widget(lv_button_create(parent)) {
+        lv_obj_set_press_lock(obj_, false);
+    }
 
     /**
      * @brief Creates or replaces this button's label child.
