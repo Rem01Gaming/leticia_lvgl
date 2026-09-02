@@ -1,4 +1,4 @@
-#include "gui/screens/main_screen.hpp"
+#include "main_screen.hpp"
 
 #include "gui/dsl.hpp"
 

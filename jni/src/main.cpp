@@ -7,6 +7,7 @@
 #include <string>
 #include <unistd.h>
 #include <pthread.h>
+#include <fcntl.h>
 #include <sched.h>
 #include <sys/syscall.h>
 
@@ -14,7 +15,8 @@
 
 #include "audio/audio_manager.hpp"
 #include "config/device_config.hpp"
-#include "gui/screens/main_screen.hpp"
+#include "config/user_config.hpp"
+#include "gui/view/main_screen.hpp"
 #include "gui/ui_scale.hpp"
 #include "gui/units.hpp"
 #include "input/safety_exit.hpp"
@@ -206,6 +208,14 @@ int main(int argc, char *argv[]) {
         Leticia::ui_print("Loaded device config (backlight=%s)", device_config.backlight_path.c_str());
     } else {
         Leticia::ui_print("No device config found, using auto-detection");
+    }
+
+    Leticia::user_config_t user_config;
+    if (Leticia::load_user_config(zip_path, user_config)) {
+        Leticia::ui_print("Loaded user config (timezone=%s, music_scan_path=%s)",
+                       user_config.timezone.c_str(), user_config.music_scan_path.c_str());
+    } else {
+        Leticia::ui_print("No user config found, using defaults");
     }
 
     Leticia::audio_manager audio;
