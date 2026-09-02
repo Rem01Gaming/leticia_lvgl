@@ -27,17 +27,17 @@ uint64_t now_ms() {
 }
 
 /**
- * @brief Reads the current state of a headphone switch.
+ * @brief Reads the current state of an EV_SW switch code.
  */
-bool try_read_headphone_switch_state(int fd, bool *connected) {
-    if (!evdev_probe::has_switch(fd, SW_HEADPHONE_INSERT))
+bool try_read_switch_state(int fd, unsigned int switch_code, bool *active) {
+    if (!evdev_probe::has_switch(fd, switch_code))
         return false;
 
     unsigned long sw_state_bits[(SW_MAX / (sizeof(unsigned long) * 8)) + 1] = {0};
     if (ioctl(fd, EVIOCGSW(sizeof(sw_state_bits)), sw_state_bits) < 0)
         return false;
 
-    *connected = evdev_probe::has_bit(sw_state_bits, SW_HEADPHONE_INSERT);
+    *active = evdev_probe::has_bit(sw_state_bits, switch_code);
     return true;
 }
 
@@ -49,7 +49,8 @@ input_event_monitor::~input_event_monitor() {
 
 bool input_event_monitor::node_reports_watched_bits(int fd) {
     return evdev_probe::has_key(fd, KEY_POWER) || evdev_probe::has_key(fd, KEY_VOLUMEUP) ||
-           evdev_probe::has_key(fd, KEY_VOLUMEDOWN) || evdev_probe::has_switch(fd, SW_HEADPHONE_INSERT);
+           evdev_probe::has_key(fd, KEY_VOLUMEDOWN) || evdev_probe::has_key(fd, KEY_MEDIA) ||
+           evdev_probe::has_switch(fd, SW_HEADPHONE_INSERT) || evdev_probe::has_switch(fd, SW_JACK_PHYSICAL_INSERT);
 }
 
 bool input_event_monitor::find_usb_online_node(std::string &out_path) {
@@ -114,11 +115,21 @@ bool input_event_monitor::open() {
 
                 if (!headphone_state_known_) {
                     bool connected = false;
-                    if (try_read_headphone_switch_state(fd, &connected)) {
+                    if (try_read_switch_state(fd, SW_HEADPHONE_INSERT, &connected)) {
                         headphone_connected_ = connected;
                         headphone_state_known_ = true;
                         Leticia::ui_print("input_event_monitor: initial headphone state: %s",
                                           connected ? "connected" : "not connected");
+                    }
+                }
+
+                if (!jack_state_known_) {
+                    bool inserted = false;
+                    if (try_read_switch_state(fd, SW_JACK_PHYSICAL_INSERT, &inserted)) {
+                        jack_inserted_ = inserted;
+                        jack_state_known_ = true;
+                        Leticia::ui_print("input_event_monitor: initial jack state: %s",
+                                          inserted ? "inserted" : "not inserted");
                     }
                 }
             } else {
@@ -146,6 +157,8 @@ void input_event_monitor::close() {
     usb_state_known_ = false;
     headphone_connected_ = false;
     headphone_state_known_ = false;
+    jack_inserted_ = false;
+    jack_state_known_ = false;
 }
 
 void input_event_monitor::set_callback(input_event_cb_t callback) {
@@ -182,18 +195,27 @@ void input_event_monitor::poll_key_source(int fd) {
                     else if (ev.value == 0)
                         dispatch(input_event_type::volume_down_release);
                     break;
+                case KEY_MEDIA:
+                    if (ev.value == 1)
+                        dispatch(input_event_type::media_play_pause_press);
+                    else if (ev.value == 0)
+                        dispatch(input_event_type::media_play_pause_release);
+                    break;
                 default:
                     break;
             }
         } else if (ev.type == EV_SW && ev.code == SW_HEADPHONE_INSERT) {
             headphone_connected_ = ev.value != 0;
             headphone_state_known_ = true;
-            dispatch(headphone_connected_ ? input_event_type::headphone_insert
-                                          : input_event_type::headphone_remove);
+            dispatch(headphone_connected_ ? input_event_type::headphone_insert : input_event_type::headphone_remove);
+        } else if (ev.type == EV_SW && ev.code == SW_JACK_PHYSICAL_INSERT) {
+            jack_inserted_ = ev.value != 0;
+            jack_state_known_ = true;
+            dispatch(jack_inserted_ ? input_event_type::jack_insert : input_event_type::jack_remove);
         }
     }
 
-    if (n < 0 && errno != EAGAIN){
+    if (n < 0 && errno != EAGAIN) {
         Leticia::ui_print("input_event_monitor: read failed: %s", strerror(errno));
     }
 }

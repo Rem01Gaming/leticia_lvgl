@@ -19,6 +19,10 @@ enum class input_event_type {
     volume_down_release,
     headphone_insert,
     headphone_remove,
+    jack_insert,
+    jack_remove,
+    media_play_pause_press,
+    media_play_pause_release,
     usb_connected,
     usb_disconnected,
 };
@@ -83,6 +87,24 @@ public:
         return headphone_state_known_;
     }
 
+    /**
+     * @brief Checks if a headset jack is physically inserted.
+     *
+     * @return true if inserted, false otherwise.
+     */
+    bool is_jack_inserted() const {
+        return jack_inserted_;
+    }
+
+    /**
+     * @brief Checks if the jack physical insertion state is known.
+     *
+     * @return true if known, false otherwise.
+     */
+    bool jack_state_known() const {
+        return jack_state_known_;
+    }
+
 private:
     struct key_source {
         int fd = -1;
@@ -95,6 +117,8 @@ private:
     bool usb_state_known_ = false;
     bool headphone_connected_ = false;
     bool headphone_state_known_ = false;
+    bool jack_inserted_ = false;
+    bool jack_state_known_ = false;
     input_event_cb_t callback_;
 
     void dispatch(input_event_type type) const;
