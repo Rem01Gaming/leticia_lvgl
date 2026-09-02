@@ -96,6 +96,12 @@ bool audio_manager::init(const device_config_t &device_config, const std::string
             Leticia::ui_print("audio_manager: could not open mixer for card %u: %s", card_, r.error_description());
             cfg_loaded_ = false;
         }
+
+        auto info = mixer_.get_card_info();
+        if (!info.failed() && strstr(info.value.name, cfg_.card_name) == nullptr) {
+            Leticia::ui_print("audio_manager: mixer reports '%s', config expects '%s', possible board mismatch",
+                              info.value.name, cfg_.card_name);
+        }
     }
 
     if (input_monitor_.open()) {
