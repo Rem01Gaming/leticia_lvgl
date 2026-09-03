@@ -41,6 +41,16 @@ struct device_config_t {
     std::vector<int> audio_thread_affinity;
 
     /**
+     * @brief Path to the battery power_supply sysfs node. Empty means auto-detect.
+     */
+    std::string battery_path;
+
+    /**
+     * @brief Status bar height in dp, reserved at the top of every screen.
+     */
+    int status_bar_height_dp = 24;
+
+    /**
      * @brief Checks if the configuration is valid.
      *
      * @return true if valid, false otherwise.

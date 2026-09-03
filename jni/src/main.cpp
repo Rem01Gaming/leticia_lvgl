@@ -16,11 +16,13 @@
 #include "audio/audio_manager.hpp"
 #include "config/device_config.hpp"
 #include "config/user_config.hpp"
+#include "gui/components/status_bar.hpp"
 #include "gui/view/main_screen.hpp"
 #include "gui/ui_scale.hpp"
 #include "gui/units.hpp"
 #include "input/safety_exit.hpp"
 #include "input/touch_probe.hpp"
+#include "power/battery_monitor.hpp"
 #include "power/power_manager.hpp"
 #include "util/parent_mute.hpp"
 #include "util/updater_proto.hpp"
@@ -230,8 +232,18 @@ int main(int argc, char *argv[]) {
 
     apply_display_density(disp);
 
+    Leticia::battery_monitor battery;
+    if (battery.init(device_config)) {
+        Leticia::ui_print("Battery monitor ready (%d%%)", battery.percent());
+    } else {
+        Leticia::ui_print("No battery node found, status bar battery reading will be blank");
+    }
+
+    Leticia::gui::status_bar status_bar;
+    status_bar.init(battery, user_config, device_config.status_bar_height_dp);
+
     Leticia::power_manager power;
-    Leticia::screens::build_main_screen(audio, power, g_should_exit);
+    Leticia::screens::build_main_screen(audio, power, status_bar, g_should_exit);
 
     power.init(disp, device_config);
     power.set_touch_indev(indev);
@@ -259,6 +271,8 @@ int main(int argc, char *argv[]) {
 
     safety_exit.stop();
 
+    status_bar.deinit();
+    battery.deinit();
     power.deinit();
     audio.deinit();
 

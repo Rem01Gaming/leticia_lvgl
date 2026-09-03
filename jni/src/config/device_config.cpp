@@ -65,6 +65,16 @@ void parse_ini(const std::string &text, device_config_t &out) {
             continue;
         }
 
+        if (key == "battery_path") {
+            out.battery_path = val;
+            continue;
+        }
+
+        if (key == "status_bar_height_dp") {
+            out.status_bar_height_dp = atoi(val.c_str());
+            continue;
+        }
+
         if (key == "audio_thread_affinity") {
             std::istringstream iss(val);
             std::vector<int> cpus;

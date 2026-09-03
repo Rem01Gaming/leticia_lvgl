@@ -8,6 +8,7 @@ namespace {
 
 using namespace Leticia::units;
 using Leticia::ui::button;
+using Leticia::ui::content_area;
 using Leticia::ui::widget;
 
 /**
@@ -50,17 +51,19 @@ void exit_btn_event_cb(lv_event_t *e) {
 
 } // namespace
 
-void build_main_screen(Leticia::audio_manager &audio, Leticia::power_manager &power, std::atomic<bool> &should_exit) {
+void build_main_screen(Leticia::audio_manager &audio, Leticia::power_manager &power,
+                        const Leticia::gui::status_bar &status_bar, std::atomic<bool> &should_exit) {
     widget scr(lv_screen_active());
+    content_area content(scr, status_bar.height_px());
 
-    button audio_btn(scr);
+    button audio_btn(content);
     audio_btn.text(audio.is_available() ? "Play 1kHz Sine" : "Audio Unavailable", 24_sp)
         .size(260_dp, 90_dp)
         .align(LV_ALIGN_CENTER, 0_dp, -60_dp)
         .on(LV_EVENT_CLICKED, audio_toggle_btn_event_cb, &audio)
         .on(LV_EVENT_ALL, user_activity_event_cb, &power);
 
-    button exit_btn(scr);
+    button exit_btn(content);
     exit_btn.text("Exit", 24_sp)
         .size(220_dp, 90_dp)
         .align(LV_ALIGN_CENTER, 0_dp, 80_dp)
