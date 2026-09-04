@@ -136,9 +136,9 @@
 /** Used to initialize default sizes such as widget sizes and style paddings. */
 #define LV_DPI_DEF 130
 /** Align the stride of all layers and images to this many bytes. */
-#define LV_DRAW_BUF_STRIDE_ALIGN 1
+#define LV_DRAW_BUF_STRIDE_ALIGN 64
 /** Align the start address of draw_buf addresses to this many bytes. */
-#define LV_DRAW_BUF_ALIGN 4
+#define LV_DRAW_BUF_ALIGN 64
 /** 3x3 matrix API (lv_matrix_t) for transformations. Requires floating point support.
  *
  *  Enable: LV_USE_FLOAT
@@ -153,7 +153,7 @@
  *  buffered into a "simple" layer in chunks of this size.
  *  "Transformed layers" (if `transform_angle/zoom` are set) use larger buffers and can't be chunked.
  */
-#define LV_DRAW_LAYER_SIMPLE_BUF_SIZE (24 * 1024)
+#define LV_DRAW_LAYER_SIMPLE_BUF_SIZE (256 * 1024)
 /** Limit for simple and transformed layers together; 0 means no limit.
  *  Must be at least `LV_DRAW_LAYER_SIMPLE_BUF_SIZE`, and with transformed layers large enough
  *  for the largest widget too (width x height x 4).
@@ -162,7 +162,7 @@
 
 #if LV_USE_OS != LV_OS_NONE
 /** If FreeType or ThorVG is enabled, it is recommended to set it to 32KB or more. */
-#define LV_DRAW_THREAD_STACK_SIZE (8 * 1024)
+#define LV_DRAW_THREAD_STACK_SIZE (64 * 1024)
 /** Thread priority controls the relative importance of the drawing threads.
  *  Values correspond to lv_thread_prio_t enum in lv_os.h:
  *  0: LV_THREAD_PRIO_LOWEST
@@ -248,7 +248,7 @@
 /** Maximum shadow size to buffer, where shadow size is `shadow_width + radius`.
  *  Costs this value squared in RAM; 0 disables caching.
  */
-#define LV_DRAW_SW_SHADOW_CACHE_SIZE 0
+#define LV_DRAW_SW_SHADOW_CACHE_SIZE 32
 /** The circumference of a 1/4 circle is cached for anti-aliasing, costing
  *  radius * 4 bytes per circle. Set to 0 to disable caching.
  */
@@ -742,11 +742,11 @@
 /** Avoids repeatedly opening and decoding the same images, at the cost of RAM.
  *  Of little benefit with only the built-in image formats.
  */
-#define LV_CACHE_DEF_SIZE 0
+#define LV_CACHE_DEF_SIZE (128 * 1024 * 1024U)
 /** Avoids repeatedly reading image headers, at the cost of RAM.
  *  Of little benefit with only the built-in image formats.
  */
-#define LV_IMAGE_HEADER_CACHE_DEF_CNT 0
+#define LV_IMAGE_HEADER_CACHE_DEF_CNT 128
 /** Decoder for LVGL's run-length encoded binary image format. */
 #define LV_USE_RLE 0
 /** LZ4 compress/decompress functions, used by LVGL's compressed binary images. */
