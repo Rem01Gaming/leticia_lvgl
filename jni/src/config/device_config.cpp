@@ -12,6 +12,21 @@ namespace {
 constexpr const char *kDeviceConfigName = "config/device.conf";
 constexpr const char *kAlsaUcmName = "config/alsa.conf";
 
+bool parse_cutout_position(const std::string &val, cutout_position &out) {
+    if (val == "none") {
+        out = cutout_position::none;
+    } else if (val == "top_center" || val == "center") {
+        out = cutout_position::top_center;
+    } else if (val == "top_left" || val == "left") {
+        out = cutout_position::top_left;
+    } else if (val == "top_right" || val == "right") {
+        out = cutout_position::top_right;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 void parse_ini(const std::string &text, device_config_t &out) {
     size_t pos = 0;
     while (pos < text.size()) {
@@ -72,6 +87,25 @@ void parse_ini(const std::string &text, device_config_t &out) {
 
         if (key == "status_bar_height_dp") {
             out.status_bar_height_dp = atoi(val.c_str());
+            continue;
+        }
+
+        if (key == "screen_corner_radius_dp") {
+            out.screen_corner_radius_dp = atoi(val.c_str());
+            continue;
+        }
+
+        if (key == "camera_cutout") {
+            if (!parse_cutout_position(val, out.camera_cutout)) {
+                Leticia::ui_print(
+                        "device_config: invalid camera_cutout '%s', expected none/top_center/top_left/top_right",
+                        val.c_str());
+            }
+            continue;
+        }
+
+        if (key == "camera_cutout_width_dp") {
+            out.camera_cutout_width_dp = atoi(val.c_str());
             continue;
         }
 

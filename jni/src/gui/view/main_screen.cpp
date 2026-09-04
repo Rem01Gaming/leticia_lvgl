@@ -57,16 +57,16 @@ void build_main_screen(Leticia::audio_manager &audio, Leticia::power_manager &po
     content_area content(scr, status_bar.height_px());
 
     button audio_btn(content);
-    audio_btn.text(audio.is_available() ? "Play 1kHz Sine" : "Audio Unavailable", 24_sp)
-        .size(260_dp, 90_dp)
-        .align(LV_ALIGN_CENTER, 0_dp, -60_dp)
+    audio_btn.text(audio.is_available() ? "Play 1kHz Sine" : "Audio Unavailable", 18_sp)
+        .size(200_dp, 68_dp)
+        .align(LV_ALIGN_CENTER, 0_dp, -42_dp)
         .on(LV_EVENT_CLICKED, audio_toggle_btn_event_cb, &audio)
         .on(LV_EVENT_ALL, user_activity_event_cb, &power);
 
     button exit_btn(content);
-    exit_btn.text("Exit", 24_sp)
-        .size(220_dp, 90_dp)
-        .align(LV_ALIGN_CENTER, 0_dp, 80_dp)
+    exit_btn.text("Exit", 18_sp)
+        .size(200_dp, 68_dp)
+        .align(LV_ALIGN_CENTER, 0_dp, 46_dp)
         .on(LV_EVENT_CLICKED, exit_btn_event_cb, &should_exit)
         .on(LV_EVENT_ALL, user_activity_event_cb, &power);
 

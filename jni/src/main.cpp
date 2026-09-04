@@ -240,7 +240,7 @@ int main(int argc, char *argv[]) {
     }
 
     Leticia::gui::status_bar status_bar;
-    status_bar.init(battery, user_config, device_config.status_bar_height_dp);
+    status_bar.init(battery, user_config, device_config);
 
     Leticia::power_manager power;
     Leticia::screens::build_main_screen(audio, power, status_bar, g_should_exit);

@@ -14,7 +14,40 @@ namespace {
 using namespace Leticia::units;
 
 constexpr uint32_t kClockPollIntervalMs = 1000;
-constexpr sp kTextSize{14.0f};
+constexpr sp kTextSize{13.0f};
+constexpr int kBaseMarginDp = 8;
+
+/**
+ * @brief Extra left/right dp margin to keep the edge-anchored labels clear
+ * of rounded screen corners and any camera cutout that intrudes into the
+ * bar from that side.
+ *
+ * Rounded corners are treated conservatively: the full corner radius is
+ * added as horizontal clearance, since content anchored flush to the top
+ * edge sits exactly where a corner's arc excludes the most horizontal
+ * space. A center cutout doesn't push edge-anchored labels by itself; it
+ * only matters to a layout that centers something in the bar, which this
+ * one doesn't.
+ */
+struct safe_margins {
+    int left_dp;
+    int right_dp;
+};
+
+safe_margins compute_safe_margins(const Leticia::device_config_t &device_config) {
+    safe_margins margins{kBaseMarginDp, kBaseMarginDp};
+
+    margins.left_dp += device_config.screen_corner_radius_dp;
+    margins.right_dp += device_config.screen_corner_radius_dp;
+
+    if (device_config.camera_cutout == Leticia::cutout_position::top_left) {
+        margins.left_dp += device_config.camera_cutout_width_dp;
+    } else if (device_config.camera_cutout == Leticia::cutout_position::top_right) {
+        margins.right_dp += device_config.camera_cutout_width_dp;
+    }
+
+    return margins;
+}
 
 /**
  * @brief Picks the battery glyph matching the given charge state.
@@ -40,32 +73,39 @@ status_bar::~status_bar() {
     deinit();
 }
 
-void status_bar::init(Leticia::battery_monitor &battery, const Leticia::user_config_t &user_config, int height_dp) {
+void status_bar::init(Leticia::battery_monitor &battery, const Leticia::user_config_t &user_config,
+                       const Leticia::device_config_t &device_config) {
     if (!user_config.timezone.empty()) {
         setenv("TZ", user_config.timezone.c_str(), 1);
         tzset();
     }
 
     battery_ = &battery;
-    height_px_ = dp(static_cast<float>(height_dp)).px();
+    dp height{static_cast<float>(device_config.status_bar_height_dp)};
+    height_px_ = height.px();
 
     Leticia::ui::widget bar_widget(lv_obj_create(lv_layer_top()));
     bar_widget.width_pct(100)
-            .height(dp(static_cast<float>(height_dp)))
+            .height(height)
             .align(LV_ALIGN_TOP_MID)
             .bg_color(lv_color_black())
             .bg_opa(LV_OPA_COVER)
+            .radius(0_dp)
             .pad(0_dp)
             .no_scroll();
     lv_obj_set_style_border_width(bar_widget.raw(), 0, LV_PART_MAIN);
     bar_ = bar_widget.raw();
 
+    safe_margins margins = compute_safe_margins(device_config);
+    dp left_margin{static_cast<float>(margins.left_dp)};
+    dp right_margin{static_cast<float>(margins.right_dp)};
+
     Leticia::ui::label time_lbl(bar_, "");
-    time_lbl.font(kTextSize).text_color(lv_color_white()).align(LV_ALIGN_LEFT_MID, 8_dp, 0_dp);
+    time_lbl.font(kTextSize).text_color(lv_color_white()).align(LV_ALIGN_LEFT_MID, left_margin, 0_dp);
     time_label_ = time_lbl.raw();
 
     Leticia::ui::label battery_lbl(bar_, "");
-    battery_lbl.font(kTextSize).text_color(lv_color_white()).align(LV_ALIGN_RIGHT_MID, -8_dp, 0_dp);
+    battery_lbl.font(kTextSize).text_color(lv_color_white()).align(LV_ALIGN_RIGHT_MID, -right_margin, 0_dp);
     battery_label_ = battery_lbl.raw();
 
     refresh_clock();

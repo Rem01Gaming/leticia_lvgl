@@ -4,6 +4,7 @@
 
 #include <lvgl.h>
 
+#include "config/device_config.hpp"
 #include "config/user_config.hpp"
 #include "power/battery_monitor.hpp"
 
@@ -29,9 +30,12 @@ public:
      *
      * @param battery Battery monitor providing charge updates for the lifetime of the bar.
      * @param user_config User configuration, used to set the display timezone.
-     * @param height_dp Bar height in dp, typically device_config_t::status_bar_height_dp.
+     * @param device_config Device configuration; supplies the bar height and the
+     * screen corner radius / camera cutout used to keep the clock and battery
+     * labels clear of rounded corners and any cutout on their side of the bar.
      */
-    void init(Leticia::battery_monitor &battery, const Leticia::user_config_t &user_config, int height_dp);
+    void init(Leticia::battery_monitor &battery, const Leticia::user_config_t &user_config,
+              const Leticia::device_config_t &device_config);
 
     /**
      * @brief Deinitializes the bar and stops its timer.
