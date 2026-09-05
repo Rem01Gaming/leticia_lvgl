@@ -239,14 +239,14 @@ int main(int argc, char *argv[]) {
         Leticia::ui_print("No battery node found, status bar battery reading will be blank");
     }
 
-    Leticia::gui::status_bar status_bar;
-    status_bar.init(battery, user_config, device_config);
-
     Leticia::power_manager power;
-    Leticia::screens::build_main_screen(audio, power, status_bar, g_should_exit);
-
     power.init(disp, device_config);
     power.set_touch_indev(indev);
+
+    Leticia::gui::status_bar status_bar;
+    status_bar.init(battery, power, user_config, device_config);
+
+    Leticia::screens::build_main_screen(audio, power, status_bar, g_should_exit);
 
     Leticia::safety_exit_monitor safety_exit;
     safety_exit.start(safety_exit_cb);

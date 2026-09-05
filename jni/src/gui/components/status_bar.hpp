@@ -8,6 +8,10 @@
 #include "config/user_config.hpp"
 #include "power/battery_monitor.hpp"
 
+namespace Leticia {
+class power_manager;
+}
+
 namespace Leticia::gui {
 
 /**
@@ -29,12 +33,14 @@ public:
      * @brief Builds the bar on the top layer and starts its clock/battery updates.
      *
      * @param battery Battery monitor providing charge updates for the lifetime of the bar.
+     * @param power Power manager notified on every touch to reset the activity timer.
      * @param user_config User configuration, used to set the display timezone.
      * @param device_config Device configuration; supplies the bar height and the
      * screen corner radius / camera cutout used to keep the clock and battery
      * labels clear of rounded corners and any cutout on their side of the bar.
      */
-    void init(Leticia::battery_monitor &battery, const Leticia::user_config_t &user_config,
+    void init(Leticia::battery_monitor &battery, Leticia::power_manager &power,
+              const Leticia::user_config_t &user_config,
               const Leticia::device_config_t &device_config);
 
     /**
@@ -55,6 +61,7 @@ private:
     lv_obj_t *battery_label_ = nullptr;
     lv_timer_t *clock_timer_ = nullptr;
     Leticia::battery_monitor *battery_ = nullptr;
+    Leticia::power_manager *power_ = nullptr;
     int32_t height_px_ = 0;
 
     void refresh_clock();

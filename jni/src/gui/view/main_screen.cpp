@@ -15,6 +15,10 @@ using Leticia::ui::widget;
  * @brief Wakes the display and resets the idle timer on any input activity.
  */
 void user_activity_event_cb(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_PRESSED && code != LV_EVENT_KEY && code != LV_EVENT_ROTARY)
+        return;
+
     auto *power = static_cast<Leticia::power_manager *>(lv_event_get_user_data(e));
 
     Leticia::power_state state = power->get_state();

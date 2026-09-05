@@ -2,6 +2,7 @@
 
 #include "gui/dsl.hpp"
 #include "gui/ui_scale.hpp"
+#include "power/power_manager.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -67,13 +68,33 @@ const char *battery_symbol(int percent, Leticia::battery_status status) {
     return LV_SYMBOL_BATTERY_EMPTY;
 }
 
+/**
+ * @brief Wakes the display and resets the idle timer on any input activity.
+ */
+void status_bar_activity_event_cb(lv_event_t *e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code != LV_EVENT_PRESSED && code != LV_EVENT_KEY && code != LV_EVENT_ROTARY)
+        return;
+
+    auto *power = static_cast<Leticia::power_manager *>(lv_event_get_user_data(e));
+    if (power == nullptr)
+        return;
+
+    Leticia::power_state state = power->get_state();
+    if (state == Leticia::power_state::sleep || state == Leticia::power_state::dimmed)
+        power->set_state(Leticia::power_state::on);
+
+    power->reset_activity_timer();
+}
+
 } // namespace
 
 status_bar::~status_bar() {
     deinit();
 }
 
-void status_bar::init(Leticia::battery_monitor &battery, const Leticia::user_config_t &user_config,
+void status_bar::init(Leticia::battery_monitor &battery, Leticia::power_manager &power,
+                       const Leticia::user_config_t &user_config,
                        const Leticia::device_config_t &device_config) {
     if (!user_config.timezone.empty()) {
         setenv("TZ", user_config.timezone.c_str(), 1);
@@ -81,6 +102,7 @@ void status_bar::init(Leticia::battery_monitor &battery, const Leticia::user_con
     }
 
     battery_ = &battery;
+    power_ = &power;
     dp height{static_cast<float>(device_config.status_bar_height_dp)};
     height_px_ = height.px();
 
@@ -92,7 +114,8 @@ void status_bar::init(Leticia::battery_monitor &battery, const Leticia::user_con
             .bg_opa(LV_OPA_COVER)
             .radius(0_dp)
             .pad(0_dp)
-            .no_scroll();
+            .no_scroll()
+            .on(LV_EVENT_ALL, status_bar_activity_event_cb, power_);
     lv_obj_set_style_border_width(bar_widget.raw(), 0, LV_PART_MAIN);
     bar_ = bar_widget.raw();
 
@@ -130,6 +153,7 @@ void status_bar::deinit() {
     }
 
     battery_ = nullptr;
+    power_ = nullptr;
 }
 
 void status_bar::refresh_clock() {

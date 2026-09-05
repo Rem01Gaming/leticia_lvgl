@@ -127,6 +127,22 @@ namespace Leticia::ui {
             return *this;
         }
 
+        /**
+         * @brief Lets events on this object propagate to its parent instead
+         * of stopping here.
+         *
+         * Every LVGL object is clickable by default, so a plain container
+         * placed between a screen and its children (e.g. content_area)
+         * intercepts taps meant for the screen's own handlers unless this
+         * is set. Prefer this over re-attaching the same callback to every
+         * new container -- it keeps a single handler on the ancestor
+         * working for whatever gets added underneath later.
+         */
+        widget &bubble_events() {
+            lv_obj_set_event_bubble(obj_, true);
+            return *this;
+        }
+
     protected:
         lv_obj_t *obj_;
     };
@@ -176,6 +192,10 @@ namespace Leticia::ui {
             lv_obj_set_style_border_width(obj_, 0, LV_PART_MAIN);
             lv_obj_set_scrollbar_mode(obj_, LV_SCROLLBAR_MODE_OFF);
             lv_obj_set_scrollable(obj_, false);
+            /* Purely a layout container -- let clicks on empty space fall
+             * through to whatever handlers the screen itself has (e.g. the
+             * activity/wake handler), instead of dead-ending here. */
+            lv_obj_set_event_bubble(obj_, true);
         }
     };
 
