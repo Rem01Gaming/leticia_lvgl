@@ -435,7 +435,7 @@ namespace Leticia {
             Leticia::ui_print("No power button found, button control disabled");
         }
 
-        activity_timer_ = lv_timer_create(activity_timer_trampoline, 500, this);
+        activity_timer_ = lv_timer_create(activity_timer_trampoline, 50, this);
 
         initialized_ = true;
 
@@ -490,12 +490,8 @@ namespace Leticia {
                 }
                 fade_complete_cb_ = nullptr;
                 invalidate_all_layers();
-                /* Don't touch the backlight or call into LVGL's redraw/timer
-                 * machinery here -- set_state() can be reached re-entrantly
-                 * from inside an LVGL timer callback, where that's unsafe.
-                 * Just flag the wake as pending; service_pending_wake() does
-                 * the full redraw + backlight restore, in that order, from
-                 * the main loop. */
+                /* Redraw is still deferred to service_pending_wake() in the
+                 * main loop to avoid re-entrancy issues with lv_refr_now. */
                 pending_full_redraw_ = true;
                 break;
             }
