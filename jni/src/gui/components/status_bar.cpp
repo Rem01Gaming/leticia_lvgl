@@ -15,7 +15,7 @@ namespace {
 using namespace Leticia::units;
 
 constexpr uint32_t kClockPollIntervalMs = 1000;
-constexpr sp kTextSize{13.0f};
+constexpr sp kTextSize{12.7f};
 constexpr font_manager::weight kTextWeight = font_manager::weight::medium;
 constexpr int kBaseMarginDp = 8;
 
