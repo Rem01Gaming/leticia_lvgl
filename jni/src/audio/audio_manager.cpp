@@ -77,14 +77,15 @@ bool audio_manager::init(const device_config_t &device_config, const std::string
     card_ = device_config.alsa_card;
     cpu_affinity_ = device_config.audio_thread_affinity;
 
-    std::string ucm_text;
-    if (load_alsa_ucm_config_text(zip_path, ucm_text)) {
-        ucm::parse_error err = cfg_.parse(ucm_text.c_str());
+    std::string ucm_path;
+    if (resolve_alsa_ucm_config_path(zip_path, ucm_path)) {
+        ucm::parse_error err = cfg_.parse_file(ucm_path.c_str());
         if (err.failed()) {
             Leticia::ui_print("audio_manager: UCM config parse error: %s (line %u)", err.description(), err.line);
         } else {
             cfg_loaded_ = true;
-            Leticia::ui_print("audio_manager: loaded UCM config for card '%s' (%s)", cfg_.card_name, cfg_.card_display_name);
+            Leticia::ui_print("audio_manager: loaded UCM config from %s for card '%s' (%s)",
+                              ucm_path.c_str(), cfg_.card_name, cfg_.card_display_name);
         }
     } else {
         Leticia::ui_print("audio_manager: no UCM config found, audio test unavailable");

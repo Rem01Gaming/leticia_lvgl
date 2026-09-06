@@ -21,8 +21,8 @@ enum class weight : int32_t {
  * @brief Loads Google Sans and brings up FreeType.
  *
  * Resolves the upright and italic variable-font TTFs (env override,
- * sibling file, or extracted from the flashed zip, in that order -- same
- * tiers as Leticia::resolve_config_text()). Montserrat is fully compiled
+ * or extracted from the flashed zip, in that order -- same
+ * tiers as Leticia::resolve_config_file_path()). Montserrat is fully compiled
  * out of this build, so there is no bitmap font to fall back to: any
  * failure here is unrecoverable and the caller must abort startup.
  *

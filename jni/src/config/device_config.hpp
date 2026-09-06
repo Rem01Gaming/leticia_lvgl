@@ -102,6 +102,9 @@ struct device_config_t {
 /**
  * @brief Loads the device configuration.
  *
+ * Resolves the configuration path (env override or extracted resource)
+ * and parses it.
+ *
  * @param zip_path Path to the OTA zip file.
  * @param out Structure to store the configuration.
  * @return true if loaded successfully, false otherwise.
@@ -109,12 +112,21 @@ struct device_config_t {
 bool load_device_config(const std::string &zip_path, device_config_t &out);
 
 /**
- * @brief Reads the ALSA UCM configuration text.
+ * @brief Parses device configuration from a file.
+ *
+ * @param path Path to the configuration file.
+ * @param out Structure to store the configuration.
+ * @return true if parsed successfully, false otherwise.
+ */
+bool load_device_config_from_file(const std::string &path, device_config_t &out);
+
+/**
+ * @brief Resolves the path to the ALSA UCM configuration file.
  *
  * @param zip_path Path to the OTA zip file.
- * @param out_text String to store the configuration text.
- * @return true if read successfully, false otherwise.
+ * @param out_path String to store the resolved path.
+ * @return true if resolved successfully, false otherwise.
  */
-bool load_alsa_ucm_config_text(const std::string &zip_path, std::string &out_text);
+bool resolve_alsa_ucm_config_path(const std::string &zip_path, std::string &out_path);
 
 } // namespace Leticia

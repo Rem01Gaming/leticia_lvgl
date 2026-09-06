@@ -10,10 +10,8 @@ namespace Leticia::font_manager {
 
 namespace {
 
-constexpr const char *kUprightSiblingSuffix = ".leticia.fonts.googlesans.ttf";
-constexpr const char *kItalicSiblingSuffix = ".leticia.fonts.googlesans-italic.ttf";
-constexpr const char *kUprightZipEntry = "fonts/GoogleSans-VariableFont_GRAD,opsz,wght.ttf";
-constexpr const char *kItalicZipEntry = "fonts/GoogleSans-Italic-VariableFont_GRAD,opsz,wght.ttf";
+constexpr const char *kUprightZipEntry = "fonts/GoogleSans-VariableFont.ttf";
+constexpr const char *kItalicZipEntry = "fonts/GoogleSans-Italic-VariableFont.ttf";
 
 /* FreeType's own glyph cache (LV_FREETYPE_CACHE_FT_GLYPH_CNT) covers a
  * single set of frequently-used glyphs shared across every created font,
@@ -28,13 +26,13 @@ std::map<font_key, lv_font_t *> g_font_cache;
 bool g_initialized = false;
 
 bool resolve_google_sans_paths(const std::string &zip_path) {
-    if (!resolve_config_file_path(zip_path, "LETICIA_FONT_GOOGLESANS", kUprightSiblingSuffix, kUprightZipEntry,
+    if (!resolve_config_file_path(zip_path, "LETICIA_FONT_GOOGLESANS", kUprightZipEntry,
                                   "Google Sans (upright)", g_upright_path)) {
         Leticia::ui_print("font_manager: failed to resolve Google Sans upright font");
         return false;
     }
 
-    if (!resolve_config_file_path(zip_path, "LETICIA_FONT_GOOGLESANS_ITALIC", kItalicSiblingSuffix, kItalicZipEntry,
+    if (!resolve_config_file_path(zip_path, "LETICIA_FONT_GOOGLESANS_ITALIC", kItalicZipEntry,
                                   "Google Sans (italic)", g_italic_path)) {
         Leticia::ui_print("font_manager: failed to resolve Google Sans italic font");
         return false;

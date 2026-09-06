@@ -2,7 +2,9 @@
 #include "config_resolve.hpp"
 #include "util/updater_proto.hpp"
 
+#include <cerrno>
 #include <cstdlib>
+#include <cstring>
 #include <sstream>
 
 namespace Leticia {
@@ -155,16 +157,35 @@ void parse_ini(const std::string &text, device_config_t &out) {
 } // namespace
 
 bool load_device_config(const std::string &zip_path, device_config_t &out) {
-    std::string text;
-    if (!resolve_config_text(zip_path, "LETICIA_DEVICE_CONFIG", ".leticia.conf", kDeviceConfigName, "device config", text))
+    std::string path;
+    if (!resolve_config_file_path(zip_path, "LETICIA_DEVICE_CONFIG", kDeviceConfigName, "device config", path))
         return false;
+
+    return load_device_config_from_file(path, out);
+}
+
+bool load_device_config_from_file(const std::string &path, device_config_t &out) {
+    FILE *f = fopen(path.c_str(), "rb");
+    if (f == nullptr) {
+        Leticia::ui_print("device_config: failed to open %s: %s", path.c_str(), strerror(errno));
+        return false;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    rewind(f);
+
+    std::string text;
+    text.resize(static_cast<size_t>(size));
+    fread(&text[0], 1, static_cast<size_t>(size), f);
+    fclose(f);
 
     parse_ini(text, out);
     return true;
 }
 
-bool load_alsa_ucm_config_text(const std::string &zip_path, std::string &out_text) {
-    return resolve_config_text(zip_path, "LETICIA_ALSA_CONFIG", ".leticia.alsa.conf", kAlsaUcmName, "alsa ucm config", out_text);
+bool resolve_alsa_ucm_config_path(const std::string &zip_path, std::string &out_path) {
+    return resolve_config_file_path(zip_path, "LETICIA_ALSA_CONFIG", kAlsaUcmName, "alsa ucm config", out_path);
 }
 
 } // namespace Leticia

@@ -42,6 +42,8 @@ enum class parse_error_code {
     too_many_directives,
     too_many_conflicts,
     out_of_memory,
+    file_not_found,
+    file_read_error,
     invalid_channels,
     invalid_pcm_device,
     channels_outside_device,

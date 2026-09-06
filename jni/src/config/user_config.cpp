@@ -1,5 +1,9 @@
 #include "user_config.hpp"
 #include "config_resolve.hpp"
+#include "util/updater_proto.hpp"
+
+#include <cerrno>
+#include <cstring>
 
 namespace Leticia {
 
@@ -55,9 +59,28 @@ void parse_ini(const std::string &text, user_config_t &out) {
 } // namespace
 
 bool load_user_config(const std::string &zip_path, user_config_t &out) {
-    std::string text;
-    if (!resolve_config_text(zip_path, "LETICIA_USER_CONFIG", ".leticia.user.conf", kUserConfigName, "user config", text))
+    std::string path;
+    if (!resolve_config_file_path(zip_path, "LETICIA_USER_CONFIG", kUserConfigName, "user config", path))
         return false;
+
+    return load_user_config_from_file(path, out);
+}
+
+bool load_user_config_from_file(const std::string &path, user_config_t &out) {
+    FILE *f = fopen(path.c_str(), "rb");
+    if (f == nullptr) {
+        Leticia::ui_print("user_config: failed to open %s: %s", path.c_str(), strerror(errno));
+        return false;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    rewind(f);
+
+    std::string text;
+    text.resize(static_cast<size_t>(size));
+    fread(&text[0], 1, static_cast<size_t>(size), f);
+    fclose(f);
 
     parse_ini(text, out);
     return true;

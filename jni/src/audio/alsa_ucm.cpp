@@ -1,4 +1,5 @@
 #include "alsa_ucm.hpp"
+#include "util/updater_proto.hpp"
 
 #include <cerrno>
 #include <cstdio>
@@ -25,7 +26,9 @@ const char *parse_error::description() const noexcept {
         case parse_error_code::too_many_devices: return "too many device sections within one verb";
         case parse_error_code::too_many_directives: return "too many directives within one section";
         case parse_error_code::too_many_conflicts: return "too many conflicts declared for one device";
-        case parse_error_code::out_of_memory: return "could not read the config file into memory";
+        case parse_error_code::out_of_memory: return "could not allocate memory for the config buffer";
+        case parse_error_code::file_not_found: return "the config file could not be opened";
+        case parse_error_code::file_read_error: return "error reading the config file from disk";
         case parse_error_code::invalid_channels: return "channels must be a positive integer";
         case parse_error_code::invalid_pcm_device: return "playback_pcm/capture_pcm must be a non-negative integer";
         case parse_error_code::channels_outside_device: return "channels is only valid inside a [verb:x/device:y] section";
@@ -426,26 +429,37 @@ parse_error config::parse(const char *text) noexcept {
 
 parse_error config::parse_file(const char *path) noexcept {
     FILE *f = fopen(path, "rb");
-    if (f == nullptr) return {parse_error_code::out_of_memory, 0};
+    if (f == nullptr) {
+        Leticia::ui_print("ucm: failed to open %s: %s", path, strerror(errno));
+        return {parse_error_code::file_not_found, 0};
+    }
 
     if (fseek(f, 0, SEEK_END) != 0) {
+        Leticia::ui_print("ucm: fseek(SEEK_END) failed for %s: %s", path, strerror(errno));
         fclose(f);
-        return {parse_error_code::out_of_memory, 0};
+        return {parse_error_code::file_read_error, 0};
     }
     long size = ftell(f);
     if (size < 0 || fseek(f, 0, SEEK_SET) != 0) {
+        Leticia::ui_print("ucm: ftell or fseek(SEEK_SET) failed for %s: %s", path, strerror(errno));
         fclose(f);
-        return {parse_error_code::out_of_memory, 0};
+        return {parse_error_code::file_read_error, 0};
     }
 
     char *buf = static_cast<char *>(malloc(static_cast<size_t>(size) + 1));
     if (buf == nullptr) {
+        Leticia::ui_print("ucm: failed to allocate %ld bytes for %s", size, path);
         fclose(f);
         return {parse_error_code::out_of_memory, 0};
     }
 
     size_t read = fread(buf, 1, static_cast<size_t>(size), f);
     fclose(f);
+    if (read != static_cast<size_t>(size)) {
+        Leticia::ui_print("ucm: read failed for %s (expected %ld, got %zu): %s", path, size, read, strerror(errno));
+        free(buf);
+        return {parse_error_code::file_read_error, 0};
+    }
     buf[read] = '\0';
 
     parse_error err = parse(buf);

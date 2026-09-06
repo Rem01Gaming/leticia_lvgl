@@ -14,6 +14,7 @@
 #include <lvgl.h>
 
 #include "audio/audio_manager.hpp"
+#include "config/config_resolve.hpp"
 #include "config/device_config.hpp"
 #include "config/user_config.hpp"
 #include "gui/components/status_bar.hpp"
@@ -197,6 +198,11 @@ int main(int argc, char *argv[]) {
 #if LV_USE_LOG
     lv_log_register_print_cb(lvgl_log_cb);
 #endif
+
+    if (!Leticia::init_resources(zip_path)) {
+        Leticia::ui_print("error: failed to prepare resources from %s", zip_path.c_str());
+        return 1;
+    }
 
     /* Montserrat is compiled out of this build (see lv_conf.h), so there is
      * no bitmap font to fall back to if Google Sans fails to load. Checked
