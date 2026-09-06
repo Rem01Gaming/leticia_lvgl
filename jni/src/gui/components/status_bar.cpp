@@ -16,6 +16,7 @@ using namespace Leticia::units;
 
 constexpr uint32_t kClockPollIntervalMs = 1000;
 constexpr sp kTextSize{13.0f};
+constexpr font_manager::weight kTextWeight = font_manager::weight::medium;
 constexpr int kBaseMarginDp = 8;
 
 /**
@@ -124,11 +125,11 @@ void status_bar::init(Leticia::battery_monitor &battery, Leticia::power_manager 
     dp right_margin{static_cast<float>(margins.right_dp)};
 
     Leticia::ui::label time_lbl(bar_, "");
-    time_lbl.font(kTextSize).text_color(lv_color_white()).align(LV_ALIGN_LEFT_MID, left_margin, 0_dp);
+    time_lbl.font(kTextSize, kTextWeight).text_color(lv_color_white()).align(LV_ALIGN_LEFT_MID, left_margin, 0_dp);
     time_label_ = time_lbl.raw();
 
     Leticia::ui::label battery_lbl(bar_, "");
-    battery_lbl.font(kTextSize).text_color(lv_color_white()).align(LV_ALIGN_RIGHT_MID, -right_margin, 0_dp);
+    battery_lbl.font(kTextSize, kTextWeight).text_color(lv_color_white()).align(LV_ALIGN_RIGHT_MID, -right_margin, 0_dp);
     battery_label_ = battery_lbl.raw();
 
     refresh_clock();

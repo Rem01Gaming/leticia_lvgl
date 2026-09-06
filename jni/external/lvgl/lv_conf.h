@@ -669,7 +669,7 @@
  *============================================================================*/
 
 /** Logging */
-#define LV_USE_LOG 0
+#define LV_USE_LOG 1
 #if LV_USE_LOG
 /** Default log verbosity
  *  Possible values:
@@ -842,41 +842,41 @@
 /** Montserrat 12 */
 #define LV_FONT_MONTSERRAT_12 0
 /** Montserrat 14 */
-#define LV_FONT_MONTSERRAT_14 1
+#define LV_FONT_MONTSERRAT_14 0
 /** Montserrat 16 */
 #define LV_FONT_MONTSERRAT_16 0
 /** Montserrat 18 */
 #define LV_FONT_MONTSERRAT_18 0
 /** Montserrat 20 */
-#define LV_FONT_MONTSERRAT_20 1
+#define LV_FONT_MONTSERRAT_20 0
 /** Montserrat 22 */
 #define LV_FONT_MONTSERRAT_22 0
 /** Montserrat 24 */
-#define LV_FONT_MONTSERRAT_24 1
+#define LV_FONT_MONTSERRAT_24 0
 /** Montserrat 26 */
 #define LV_FONT_MONTSERRAT_26 0
 /** Montserrat 28 */
-#define LV_FONT_MONTSERRAT_28 1
+#define LV_FONT_MONTSERRAT_28 0
 /** Montserrat 30 */
 #define LV_FONT_MONTSERRAT_30 0
 /** Montserrat 32 */
-#define LV_FONT_MONTSERRAT_32 1
+#define LV_FONT_MONTSERRAT_32 0
 /** Montserrat 34 */
 #define LV_FONT_MONTSERRAT_34 0
 /** Montserrat 36 */
-#define LV_FONT_MONTSERRAT_36 1
+#define LV_FONT_MONTSERRAT_36 0
 /** Montserrat 38 */
 #define LV_FONT_MONTSERRAT_38 0
 /** Montserrat 40 */
-#define LV_FONT_MONTSERRAT_40 1
+#define LV_FONT_MONTSERRAT_40 0
 /** Montserrat 42 */
 #define LV_FONT_MONTSERRAT_42 0
 /** Montserrat 44 */
-#define LV_FONT_MONTSERRAT_44 1
+#define LV_FONT_MONTSERRAT_44 0
 /** Montserrat 46 */
 #define LV_FONT_MONTSERRAT_46 0
 /** Montserrat 48 */
-#define LV_FONT_MONTSERRAT_48 1
+#define LV_FONT_MONTSERRAT_48 0
 /** Montserrat 28 (compressed) */
 #define LV_FONT_MONTSERRAT_28_COMPRESSED 0
 /** Dejavu 16 (Persian, Hebrew, Arabic) */
@@ -888,7 +888,7 @@
 #define LV_FONT_SOURCE_HAN_SANS_SC_16_CJK 0
 
 /** Pixel perfect monospaced fonts */
-#define LV_FONT_UNSCII_8 0
+#define LV_FONT_UNSCII_8 1
 /** UNSCII 16 */
 #define LV_FONT_UNSCII_16 0
 /** Include the header given by LV_FONT_CUSTOM_INCLUDE to declare custom
@@ -954,7 +954,7 @@
  *  - LV_FONT_DEFAULT_UNSCII_8 (enable: LV_FONT_UNSCII_8)
  *  - LV_FONT_DEFAULT_UNSCII_16 (enable: LV_FONT_UNSCII_16)
  */
-#define LV_FONT_DEFAULT LV_FONT_DEFAULT_MONTSERRAT_14
+#define LV_FONT_DEFAULT LV_FONT_DEFAULT_UNSCII_8
 
 #endif /*!LV_USE_CUSTOM_FONT_DEFAULT*/
 
@@ -972,7 +972,7 @@
 /** Load fonts by name, share them between widgets and free them by reference
  *  counting.
  */
-#define LV_USE_FONT_MANAGER 0
+#define LV_USE_FONT_MANAGER 1
 
 #if LV_USE_FONT_MANAGER
 /** Font name max length (characters) */
@@ -983,7 +983,7 @@
 /** Use images as glyphs in label and span widgets, e.g. to render emojis. */
 #define LV_USE_IMGFONT 0
 /** FreeType */
-#define LV_USE_FREETYPE 0
+#define LV_USE_FREETYPE 1
 #if LV_USE_FREETYPE
 /** When enabled, FreeType will use LVGL's memory allocator and file system
  *  abstraction instead of the platform defaults.

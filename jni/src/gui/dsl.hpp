@@ -2,6 +2,7 @@
 
 #include <lvgl.h>
 
+#include "gui/font_manager/font_manager.hpp"
 #include "gui/ui_scale.hpp"
 #include "gui/units.hpp"
 
@@ -91,7 +92,11 @@ namespace Leticia::ui {
         }
 
         widget &font(sp size, lv_style_selector_t selector = LV_PART_MAIN) {
-            lv_obj_set_style_text_font(obj_, ui_scale::pick_font(size.px()), selector);
+            return font(size, font_manager::weight::regular, false, selector);
+        }
+
+        widget &font(sp size, font_manager::weight weight, bool italic = false, lv_style_selector_t selector = LV_PART_MAIN) {
+            lv_obj_set_style_text_font(obj_, font_manager::get_font(size.px(), weight, italic), selector);
             return *this;
         }
 

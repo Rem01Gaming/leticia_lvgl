@@ -17,6 +17,7 @@
 #include "config/device_config.hpp"
 #include "config/user_config.hpp"
 #include "gui/components/status_bar.hpp"
+#include "gui/font_manager/font_manager.hpp"
 #include "gui/view/main_screen.hpp"
 #include "gui/ui_scale.hpp"
 #include "gui/units.hpp"
@@ -197,9 +198,18 @@ int main(int argc, char *argv[]) {
     lv_log_register_print_cb(lvgl_log_cb);
 #endif
 
+    /* Montserrat is compiled out of this build (see lv_conf.h), so there is
+     * no bitmap font to fall back to if Google Sans fails to load. Checked
+     * before opening the display: no point drawing a UI with no usable font. */
+    if (!Leticia::font_manager::init(zip_path)) {
+        Leticia::ui_print("error: failed to load Google Sans, cannot start UI");
+        return 1;
+    }
+
     lv_display_t *disp = open_fbdev_display();
     if (disp == nullptr) {
         Leticia::ui_print("error: could not open a framebuffer device");
+        Leticia::font_manager::deinit();
         return 1;
     }
 
@@ -278,6 +288,8 @@ int main(int argc, char *argv[]) {
 
     if (indev != nullptr)
         lv_evdev_delete(indev);
+
+    Leticia::font_manager::deinit();
 
     lv_display_delete(disp);
 
