@@ -129,6 +129,7 @@ namespace Leticia {
         lv_timer_t *fade_timer_ = nullptr;
         int fade_from_percent_ = 0;
         int fade_to_percent_ = 0;
+        int fade_duration_ms_ = 0;
         uint64_t fade_start_ms_ = 0;
         lv_timer_t *dim_hold_timer_ = nullptr;
         std::function<void()> fade_complete_cb_;
@@ -140,6 +141,7 @@ namespace Leticia {
         int read_current_brightness_percent();
         void write_brightness_percent(int percent);
         void fade_brightness_to(int target_percent, std::function<void()> on_complete = nullptr);
+        void fade_brightness_to(int target_percent, int duration_ms, std::function<void()> on_complete = nullptr);
         void finish_sleep_after_fade();
         void cancel_dim_hold();
         void invalidate_all_layers();

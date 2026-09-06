@@ -23,6 +23,7 @@ namespace Leticia {
         constexpr uint32_t kDefaultDimTimeoutSec = 20;
         constexpr uint32_t kDimHoldMs = 5000;
         constexpr int kBrightnessFadeMs = 120;
+        constexpr int kBrightnessFadeFastMs = 80;
         constexpr int kBrightnessFadeStepMs = 15;
 
         uint64_t now_ms() {
@@ -255,7 +256,7 @@ namespace Leticia {
 
         uint64_t elapsed = now_ms() - self->fade_start_ms_;
 
-        if (elapsed >= static_cast<uint64_t>(kBrightnessFadeMs)) {
+        if (elapsed >= static_cast<uint64_t>(self->fade_duration_ms_)) {
             self->write_brightness_percent(self->fade_to_percent_);
             lv_timer_delete(timer);
             self->fade_timer_ = nullptr;
@@ -268,11 +269,15 @@ namespace Leticia {
         }
 
         int delta = self->fade_to_percent_ - self->fade_from_percent_;
-        int percent = self->fade_from_percent_ + static_cast<int>((delta * static_cast<int64_t>(elapsed)) / kBrightnessFadeMs);
+        int percent = self->fade_from_percent_ + static_cast<int>((delta * static_cast<int64_t>(elapsed)) / self->fade_duration_ms_);
         self->write_brightness_percent(percent);
     }
 
     void power_manager::fade_brightness_to(int target_percent, std::function<void()> on_complete) {
+        fade_brightness_to(target_percent, kBrightnessFadeMs, std::move(on_complete));
+    }
+
+    void power_manager::fade_brightness_to(int target_percent, int duration_ms, std::function<void()> on_complete) {
         if (backlight_path_.empty()) {
             if (on_complete)
                 on_complete();
@@ -286,6 +291,7 @@ namespace Leticia {
 
         fade_from_percent_ = read_current_brightness_percent();
         fade_to_percent_ = target_percent;
+        fade_duration_ms_ = (duration_ms > 0) ? duration_ms : kBrightnessFadeMs;
         fade_start_ms_ = now_ms();
         fade_complete_cb_ = std::move(on_complete);
 
@@ -477,6 +483,8 @@ namespace Leticia {
 
         switch (state) {
             case power_state::on: {
+                power_state old_state = current_state_;
+
                 if (!set_display_blank(false))
                     Leticia::ui_print("Warning: fb unblank request failed, backlight restored anyway");
 
@@ -484,15 +492,24 @@ namespace Leticia {
                 Leticia::ui_print("Display turned ON");
                 set_touch_enabled(true);
                 cancel_dim_hold();
-                if (fade_timer_ != nullptr) {
-                    lv_timer_delete(fade_timer_);
-                    fade_timer_ = nullptr;
+
+                if (old_state == power_state::dimmed) {
+                    Leticia::ui_print("Fast-wake from dimmed");
+                    fade_brightness_to(100, kBrightnessFadeFastMs);
+                    invalidate_all_layers();
+                    // We don't set pending_full_redraw_ here because we are
+                    // already unblanked and doing a smooth fade.
+                } else {
+                    if (fade_timer_ != nullptr) {
+                        lv_timer_delete(fade_timer_);
+                        fade_timer_ = nullptr;
+                    }
+                    fade_complete_cb_ = nullptr;
+                    invalidate_all_layers();
+                    /* Redraw is still deferred to service_pending_wake() in the
+                     * main loop to avoid re-entrancy issues with lv_refr_now. */
+                    pending_full_redraw_ = true;
                 }
-                fade_complete_cb_ = nullptr;
-                invalidate_all_layers();
-                /* Redraw is still deferred to service_pending_wake() in the
-                 * main loop to avoid re-entrancy issues with lv_refr_now. */
-                pending_full_redraw_ = true;
                 break;
             }
 
