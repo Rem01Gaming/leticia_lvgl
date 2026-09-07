@@ -70,6 +70,16 @@ battery_status parse_status(const std::string &text) {
     return battery_status::unknown;
 }
 
+/**
+ * @brief Extracts the basename of a power_supply node path.
+ *
+ * e.g. "/sys/class/power_supply/battery" -> "battery"
+ */
+std::string node_basename(const std::string &node_path) {
+    size_t pos = node_path.find_last_of('/');
+    return pos == std::string::npos ? node_path : node_path.substr(pos + 1);
+}
+
 } // namespace
 
 battery_monitor::~battery_monitor() {
@@ -114,16 +124,31 @@ bool battery_monitor::find_node(const device_config_t &config) {
     return true;
 }
 
-bool battery_monitor::init(const device_config_t &config, uint32_t poll_interval_ms) {
+bool battery_monitor::init(const device_config_t &config, uint32_t fallback_poll_interval_ms) {
     if (!find_node(config))
         return false;
 
     poll();
-    poll_timer_ = lv_timer_create(poll_timer_trampoline, poll_interval_ms, this);
+
+    bool event_driven = uevent_listener_.start(node_basename(node_path_), [this]() {
+        lv_async_call(async_poll_trampoline, this);
+    });
+
+    if (event_driven)
+        Leticia::ui_print("battery_monitor: event-driven via netlink uevents");
+    else
+        Leticia::ui_print("battery_monitor: uevent listener unavailable, polling only");
+
+    // The poll timer always runs, even in event-driven mode, as a backstop
+    // against missed or unsupported uevents on some kernels.
+    poll_timer_ = lv_timer_create(poll_timer_trampoline, fallback_poll_interval_ms, this);
     return true;
 }
 
 void battery_monitor::deinit() {
+    uevent_listener_.stop();
+    lv_async_call_cancel(async_poll_trampoline, this);
+
     if (poll_timer_ != nullptr) {
         lv_timer_delete(poll_timer_);
         poll_timer_ = nullptr;
@@ -151,6 +176,10 @@ void battery_monitor::poll() {
 void battery_monitor::poll_timer_trampoline(lv_timer_t *timer) {
     auto *self = static_cast<battery_monitor *>(lv_timer_get_user_data(timer));
     self->poll();
+}
+
+void battery_monitor::async_poll_trampoline(void *self) {
+    static_cast<battery_monitor *>(self)->poll();
 }
 
 } // namespace Leticia
