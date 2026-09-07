@@ -19,11 +19,11 @@ constexpr uint32_t kClockPollIntervalMs = 1000;
 constexpr sp kTextSize{12.7f};
 constexpr font_manager::weight kTextWeight = font_manager::weight::medium;
 constexpr int kBaseMarginDp = 8;
+
 constexpr dp kBatteryIconSize{20.0f};
-/* The bolt icon sits to the left of the battery icon when charging. */
 constexpr dp kBoltIconSize{10.0f};
 constexpr dp kBoltBatteryGap{0.2f};
-constexpr dp kBatteryTextGap{4.0f};
+constexpr dp kBatteryTextGap{3.0f};
 
 /**
  * @brief Sets an lv_image's source to an SVG path, prefixed for LVGL's FS driver.
@@ -152,11 +152,10 @@ void status_bar::init(Leticia::battery_monitor &battery, Leticia::power_manager 
     /* The SVGs are pre-colored white at the file level (fill="#FFFFFF"):
      * LVGL's SVG images render through a custom vector draw path that
      * does not apply the image_recolor style, so recoloring here would
-     * have no effect. CONTAIN scales the SVG's own 960x480 viewBox down
-     * to the icon's box while preserving aspect ratio; a plain size()
-     * without an explicit scale/align left the 40:1 viewBox-to-declared-
-     * size ratio for the renderer to resolve on its own, which silently
-     * produced no output at all instead of a scaled image. */
+     * have no effect. Both battery and bolt SVGs use a 1:1 viewBox now,
+     * so a square image box fills edge to edge under CONTAIN with no
+     * transparent margin on any side, keeping the visible ink centered
+     * in the box instead of off-center inside unused space. */
     Leticia::ui::widget battery_bolt(lv_image_create(battery_row.raw()));
     battery_bolt.size(kBoltIconSize, kBoltIconSize).hidden(true);
     battery_bolt_ = battery_bolt.raw();
