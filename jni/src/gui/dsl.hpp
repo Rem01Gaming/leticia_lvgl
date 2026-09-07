@@ -91,6 +91,23 @@ namespace Leticia::ui {
             return *this;
         }
 
+        /**
+         * @brief Recolors a bitmap-sourced lv_image object, e.g. a
+         * single-color icon loaded from a black-fill PNG or an A8 alpha
+         * mask that needs to match the surrounding text/theme color.
+         *
+         * Does NOT apply to SVG sources: LVGL's SVG decoder renders
+         * through a custom vector draw path (LV_IMAGE_FLAGS_CUSTOM_DRAW)
+         * that never reads the image_recolor style, so calling this on
+         * an lv_image with an .svg source is a silent no-op. Recolor an
+         * SVG by editing its own fill attribute instead.
+         */
+        widget &image_recolor(lv_color_t color, lv_opa_t opa = LV_OPA_COVER, lv_style_selector_t selector = LV_PART_MAIN) {
+            lv_obj_set_style_image_recolor(obj_, color, selector);
+            lv_obj_set_style_image_recolor_opa(obj_, opa, selector);
+            return *this;
+        }
+
         widget &font(sp size, lv_style_selector_t selector = LV_PART_MAIN) {
             return font(size, font_manager::weight::regular, false, selector);
         }

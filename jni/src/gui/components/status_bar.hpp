@@ -58,7 +58,9 @@ public:
 private:
     lv_obj_t *bar_ = nullptr;
     lv_obj_t *time_label_ = nullptr;
-    lv_obj_t *battery_label_ = nullptr;
+    lv_obj_t *battery_icon_ = nullptr;
+    lv_obj_t *battery_bolt_ = nullptr;
+    lv_obj_t *battery_pct_label_ = nullptr;
     lv_timer_t *clock_timer_ = nullptr;
     Leticia::battery_monitor *battery_ = nullptr;
     Leticia::power_manager *power_ = nullptr;

@@ -143,7 +143,7 @@
  *
  *  Enable: LV_USE_FLOAT
  */
-#define LV_USE_MATRIX 0
+#define LV_USE_MATRIX 1
 #if LV_USE_MATRIX
 /** The rendering engine must support 3x3 matrix transformations. */
 #define LV_DRAW_TRANSFORM_USE_MATRIX 0
@@ -183,15 +183,15 @@
  *
  *  Enable: LV_USE_MATRIX
  */
-#define LV_USE_VECTOR_GRAPHIC 0
+#define LV_USE_VECTOR_GRAPHIC 1
 /** Render a widget and its children into an image buffer with lv_snapshot_take(). */
 #define LV_USE_SNAPSHOT 0
 /** Backend that gives the SW renderer vector graphics support. */
-#define LV_USE_THORVG 0
+#define LV_USE_THORVG 1
 
 #if LV_USE_THORVG
 /** Build the ThorVG copy shipped with LVGL instead of linking an external one. */
-#define LV_USE_THORVG_INTERNAL 0
+#define LV_USE_THORVG_INTERNAL 1
 #endif /*LV_USE_THORVG*/
 
 /** Required to draw anything on the screen. */
@@ -653,7 +653,7 @@
 #define LV_USE_EXT_DATA 0
 
 /** Use `float` instead of `int32_t` for coordinates and values that need sub-pixel precision. */
-#define LV_USE_FLOAT 0
+#define LV_USE_FLOAT 1
 /** Bind widgets to subject variables so they update automatically when the value changes. */
 #define LV_USE_OBSERVER 1
 /** Look up strings by ID for the selected language with lv_translation_get(). */
@@ -776,7 +776,7 @@
  *
  *  Enable: LV_USE_VECTOR_GRAPHIC
  */
-#define LV_USE_SVG 0
+#define LV_USE_SVG 1
 
 #if LV_USE_SVG
 /** SVG animation */
@@ -1652,7 +1652,7 @@
 /** Setting a default drive letter allows skipping the driver
  *  prefix in filepaths.
  */
-#define LV_FS_DEFAULT_DRIVER_LETTER 0
+#define LV_FS_DEFAULT_DRIVER_LETTER 'A'
 
 /** stdio */
 #define LV_USE_FS_STDIO 0
@@ -1667,12 +1667,14 @@
 #endif /*LV_USE_FS_STDIO*/
 
 /** POSIX */
-#define LV_USE_FS_POSIX 0
+#define LV_USE_FS_POSIX 1
 #if LV_USE_FS_POSIX
 /** Drive letter for POSIX (65 = 'A', 0 = disabled) */
-#define LV_FS_POSIX_LETTER 0
+#define LV_FS_POSIX_LETTER 'A'
 
-/** Working directory for POSIX */
+/** Working directory for POSIX. Left empty: callers pass full absolute
+ *  paths (e.g. the flashable/svg extraction dir resolved at runtime),
+ *  so no fixed prefix is assumed here. */
 #define LV_FS_POSIX_PATH ""
 /** Read cache size in bytes for POSIX (0 = disabled) */
 #define LV_FS_POSIX_CACHE_SIZE 0

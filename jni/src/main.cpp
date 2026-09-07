@@ -17,6 +17,7 @@
 #include "config/config_resolve.hpp"
 #include "config/device_config.hpp"
 #include "config/user_config.hpp"
+#include "gui/components/battery_icons.hpp"
 #include "gui/components/status_bar.hpp"
 #include "gui/font_manager/font_manager.hpp"
 #include "gui/view/main_screen.hpp"
@@ -253,6 +254,13 @@ int main(int argc, char *argv[]) {
         Leticia::ui_print("Battery monitor ready (%d%%)", battery.percent());
     } else {
         Leticia::ui_print("No battery node found, status bar battery reading will be blank");
+    }
+
+    /* Non-fatal: a failed load just leaves the status bar's battery icon
+     * hidden (see battery_icons::icon_path()), same degrade-gracefully
+     * approach as the battery monitor itself above. */
+    if (!Leticia::gui::battery_icons::init(zip_path)) {
+        Leticia::ui_print("Battery icons unavailable, status bar will show percentage only");
     }
 
     Leticia::power_manager power;

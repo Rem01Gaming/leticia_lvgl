@@ -1,5 +1,6 @@
 #include "gui/components/status_bar.hpp"
 
+#include "gui/components/battery_icons.hpp"
 #include "gui/dsl.hpp"
 #include "gui/ui_scale.hpp"
 #include "power/power_manager.hpp"
@@ -18,6 +19,29 @@ constexpr uint32_t kClockPollIntervalMs = 1000;
 constexpr sp kTextSize{12.7f};
 constexpr font_manager::weight kTextWeight = font_manager::weight::medium;
 constexpr int kBaseMarginDp = 8;
+constexpr dp kBatteryIconSize{20.0f};
+/* The bolt icon sits to the left of the battery icon when charging. */
+constexpr dp kBoltIconSize{10.0f};
+constexpr dp kBoltBatteryGap{0.2f};
+constexpr dp kBatteryTextGap{4.0f};
+
+/**
+ * @brief Sets an lv_image's source to an SVG path, prefixed for LVGL's FS driver.
+ *
+ * @param img Image object to update.
+ * @param svg_path Absolute on-disk path resolved by battery_icons, or
+ * empty (in which case the image is left with no source and hidden).
+ */
+void set_svg_source(lv_obj_t *img, const std::string &svg_path) {
+    if (svg_path.empty()) {
+        lv_obj_set_hidden(img, true);
+        return;
+    }
+
+    std::string fs_path = "A:" + svg_path;
+    lv_image_set_src(img, fs_path.c_str());
+    lv_obj_set_hidden(img, false);
+}
 
 /**
  * @brief Extra left/right dp margin to keep the edge-anchored labels clear
@@ -49,24 +73,6 @@ safe_margins compute_safe_margins(const Leticia::device_config_t &device_config)
     }
 
     return margins;
-}
-
-/**
- * @brief Picks the battery glyph matching the given charge state.
- */
-const char *battery_symbol(int percent, Leticia::battery_status status) {
-    if (status == Leticia::battery_status::charging || status == Leticia::battery_status::full)
-        return LV_SYMBOL_CHARGE;
-
-    if (percent > 87)
-        return LV_SYMBOL_BATTERY_FULL;
-    if (percent > 62)
-        return LV_SYMBOL_BATTERY_3;
-    if (percent > 37)
-        return LV_SYMBOL_BATTERY_2;
-    if (percent > 12)
-        return LV_SYMBOL_BATTERY_1;
-    return LV_SYMBOL_BATTERY_EMPTY;
 }
 
 /**
@@ -128,9 +134,45 @@ void status_bar::init(Leticia::battery_monitor &battery, Leticia::power_manager 
     time_lbl.font(kTextSize, kTextWeight).text_color(lv_color_white()).align(LV_ALIGN_LEFT_MID, left_margin, 0_dp);
     time_label_ = time_lbl.raw();
 
-    Leticia::ui::label battery_lbl(bar_, "");
-    battery_lbl.font(kTextSize, kTextWeight).text_color(lv_color_white()).align(LV_ALIGN_RIGHT_MID, -right_margin, 0_dp);
-    battery_label_ = battery_lbl.raw();
+    /* A row container holds the icon and percent label side by side so
+     * LVGL's flex layout handles their spacing; the label's width isn't
+     * known ahead of time, so a fixed offset from the bar's edge would
+     * drift as the percent text changes ("5%" vs "100%"). */
+    Leticia::ui::widget battery_row(lv_obj_create(bar_));
+    battery_row.size_content()
+            .align(LV_ALIGN_RIGHT_MID, -right_margin, 0_dp)
+            .bg_opa(LV_OPA_TRANSP)
+            .pad(0_dp)
+            .no_scroll()
+            .flex_flow(LV_FLEX_FLOW_ROW)
+            .flex_align(LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_border_width(battery_row.raw(), 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(battery_row.raw(), kBoltBatteryGap.px(), LV_PART_MAIN);
+
+    /* The SVGs are pre-colored white at the file level (fill="#FFFFFF"):
+     * LVGL's SVG images render through a custom vector draw path that
+     * does not apply the image_recolor style, so recoloring here would
+     * have no effect. CONTAIN scales the SVG's own 960x480 viewBox down
+     * to the icon's box while preserving aspect ratio; a plain size()
+     * without an explicit scale/align left the 40:1 viewBox-to-declared-
+     * size ratio for the renderer to resolve on its own, which silently
+     * produced no output at all instead of a scaled image. */
+    Leticia::ui::widget battery_bolt(lv_image_create(battery_row.raw()));
+    battery_bolt.size(kBoltIconSize, kBoltIconSize).hidden(true);
+    battery_bolt_ = battery_bolt.raw();
+    lv_image_set_antialias(battery_bolt_, true);
+    lv_image_set_inner_align(battery_bolt_, LV_IMAGE_ALIGN_CONTAIN);
+
+    Leticia::ui::widget battery_icon(lv_image_create(battery_row.raw()));
+    battery_icon.size(kBatteryIconSize, kBatteryIconSize);
+    battery_icon_ = battery_icon.raw();
+    lv_image_set_antialias(battery_icon_, true);
+    lv_image_set_inner_align(battery_icon_, LV_IMAGE_ALIGN_CONTAIN);
+
+    Leticia::ui::label battery_pct_lbl(battery_row.raw(), "");
+    battery_pct_lbl.font(kTextSize, kTextWeight).text_color(lv_color_white());
+    battery_pct_label_ = battery_pct_lbl.raw();
+    lv_obj_set_style_pad_left(battery_pct_label_, kBatteryTextGap.px(), LV_PART_MAIN);
 
     refresh_clock();
     refresh_battery();
@@ -150,7 +192,9 @@ void status_bar::deinit() {
         lv_obj_delete(bar_);
         bar_ = nullptr;
         time_label_ = nullptr;
-        battery_label_ = nullptr;
+        battery_icon_ = nullptr;
+        battery_bolt_ = nullptr;
+        battery_pct_label_ = nullptr;
     }
 
     battery_ = nullptr;
@@ -168,17 +212,32 @@ void status_bar::refresh_clock() {
 }
 
 void status_bar::refresh_battery() {
-    if (battery_ == nullptr || battery_label_ == nullptr)
+    if (battery_ == nullptr || battery_icon_ == nullptr)
         return;
 
     if (!battery_->is_available()) {
-        lv_label_set_text(battery_label_, "");
+        lv_obj_set_hidden(battery_icon_, true);
+        lv_obj_set_hidden(battery_bolt_, true);
+        lv_label_set_text(battery_pct_label_, "");
         return;
     }
 
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%s %d%%", battery_symbol(battery_->percent(), battery_->status()), battery_->percent());
-    lv_label_set_text(battery_label_, buf);
+    int percent = battery_->percent();
+    Leticia::battery_status status = battery_->status();
+
+    lv_obj_set_hidden(battery_icon_, false);
+    set_svg_source(battery_icon_, Leticia::gui::battery_icons::icon_path(percent, status));
+
+    bool charging = (status == Leticia::battery_status::charging);
+    if (charging) {
+        set_svg_source(battery_bolt_, Leticia::gui::battery_icons::bolt_path());
+    } else {
+        lv_obj_set_hidden(battery_bolt_, true);
+    }
+
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d%%", percent);
+    lv_label_set_text(battery_pct_label_, buf);
 }
 
 void status_bar::clock_timer_trampoline(lv_timer_t *timer) {
