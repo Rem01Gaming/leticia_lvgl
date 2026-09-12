@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 if [ "$1" == "clean" ]; then
   ndk-build -j12 clean
@@ -7,12 +8,19 @@ if [ "$1" == "clean" ]; then
 fi
 
 if [ "$1" == "build" ]; then
+  [ ! -d device_config/"$2" ] && {
+    echo "ERROR: device config $2 does not exists!"
+    exit 1
+  }
+
   ndk-build -j12
 
-  [ ! -d ./out ] && cp -r flashable out
+  rm -rf out
+  mkdir -p out
+  cp -r flashable/. out/
+
   cp libs/arm64-v8a/update-binary out/META-INF/com/google/android
   cp device_config/"$2"/* out/config
-
-  mkdir -p out/flashable
-  (cd out && zip -9 -r flashable/leticia_"${2//\//_}".zip . -x 'flashable/*' '.gitkeep' '*/.gitkeep')
+  cp LICENSE out
+  (cd out && zip -9 -r leticia_"${2//\//_}".zip . -x 'flashable/*' '.gitkeep' '*/.gitkeep')
 fi
