@@ -13,7 +13,7 @@
 
 #include <lvgl.h>
 
-#include "audio/audio_manager.hpp"
+#include "playback/audio_manager.hpp"
 #include "config/config_resolve.hpp"
 #include "config/device_config.hpp"
 #include "config/user_config.hpp"
@@ -191,9 +191,6 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, request_exit);
     signal(SIGTERM, request_exit);
 
-    Leticia::parent_mute mute;
-    mute.freeze();
-
     lv_init();
 
 #if LV_USE_LOG
@@ -205,13 +202,13 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Montserrat is compiled out of this build (see lv_conf.h), so there is
-     * no bitmap font to fall back to if Google Sans fails to load. Checked
-     * before opening the display: no point drawing a UI with no usable font. */
     if (!Leticia::font_manager::init(zip_path)) {
         Leticia::ui_print("error: failed to load Google Sans, cannot start UI");
         return 1;
     }
+
+    Leticia::parent_mute mute;
+    mute.freeze();
 
     lv_display_t *disp = open_fbdev_display();
     if (disp == nullptr) {

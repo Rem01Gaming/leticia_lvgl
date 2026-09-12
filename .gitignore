@@ -1,5 +1,6 @@
 *.zip
 update-binary
+/out/
 /obj/
 /libs/
 /.idea/

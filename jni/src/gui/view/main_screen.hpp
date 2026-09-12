@@ -2,7 +2,7 @@
 
 #include <atomic>
 
-#include "audio/audio_manager.hpp"
+#include "playback/audio_manager.hpp"
 #include "gui/components/status_bar.hpp"
 #include "power/power_manager.hpp"
 
