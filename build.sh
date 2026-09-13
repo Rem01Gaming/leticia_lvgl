@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$1" == "clean" ]; then
-  ndk-build -j12 clean
+  ndk-build -j"$(nproc)" clean
   rm -rf out
   exit 0
 fi
@@ -13,7 +13,7 @@ if [ "$1" == "build" ]; then
     exit 1
   }
 
-  ndk-build -j12
+  ndk-build -j"$(nproc)"
 
   rm -rf out
   mkdir -p out

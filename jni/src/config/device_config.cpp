@@ -82,6 +82,16 @@ void parse_ini(const std::string &text, device_config_t &out) {
             continue;
         }
 
+        if (key == "onboard_audio_reopen_workaround") {
+            out.onboard_audio_reopen_workaround = (val == "1" || val == "true" || val == "yes");
+            continue;
+        }
+
+        if (key == "audio_max_bit_depth") {
+            out.audio_max_bit_depth = static_cast<unsigned int>(atoi(val.c_str()));
+            continue;
+        }
+
         if (key == "battery_path") {
             out.battery_path = val;
             continue;

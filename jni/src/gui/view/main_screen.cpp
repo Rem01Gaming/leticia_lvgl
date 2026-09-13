@@ -29,20 +29,18 @@ void user_activity_event_cb(lv_event_t *e) {
 }
 
 /**
- * @brief Toggles the ALSA test tone and updates the button's label to match.
+ * @brief Toggles music playback and updates the button's label to match.
+ *
+ * No availability pre-check here: a USB DAC can play even when the onboard
+ * UCM config failed to load, so the manager itself decides at start time.
  */
-void audio_toggle_btn_event_cb(lv_event_t *e) {
+void music_toggle_btn_event_cb(lv_event_t *e) {
     auto *audio = static_cast<Leticia::audio_manager *>(lv_event_get_user_data(e));
     auto *btn = static_cast<lv_obj_t *>(lv_event_get_target(e));
     lv_obj_t *btn_label = lv_obj_get_child(btn, 0);
 
-    if (!audio->is_available()) {
-        lv_label_set_text(btn_label, "Audio Unavailable");
-        return;
-    }
-
-    bool playing = audio->toggle_test_tone();
-    lv_label_set_text(btn_label, playing ? "Stop 1kHz Sine" : "Play 1kHz Sine");
+    bool playing = audio->toggle_playback();
+    lv_label_set_text(btn_label, playing ? "Stop Music" : "Play Music");
 }
 
 /**
@@ -61,10 +59,10 @@ void build_main_screen(Leticia::audio_manager &audio, Leticia::power_manager &po
     content_area content(scr, status_bar.height_px());
 
     button audio_btn(content);
-    audio_btn.text(audio.is_available() ? "Play 1kHz Sine" : "Audio Unavailable", 18_sp)
+    audio_btn.text(audio.is_playing() ? "Stop Music" : "Play Music", 18_sp)
         .size(200_dp, 68_dp)
         .align(LV_ALIGN_CENTER, 0_dp, -42_dp)
-        .on(LV_EVENT_CLICKED, audio_toggle_btn_event_cb, &audio)
+        .on(LV_EVENT_CLICKED, music_toggle_btn_event_cb, &audio)
         .on(LV_EVENT_ALL, user_activity_event_cb, &power);
 
     button exit_btn(content);

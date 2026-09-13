@@ -1,25 +1,28 @@
 #pragma once
 
-#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <thread>
-#include <condition_variable>
-#include <mutex>
+#include <vector>
 
 #include <lvgl.h>
 
 #include "ModernAlsa.hpp"
 #include "config/device_config.hpp"
+#include "config/user_config.hpp"
 #include "input/input_event.hpp"
 #include "alsa_ucm.hpp"
 
 namespace Leticia {
 
 /**
- * @brief Enumeration of audio output paths.
+ * @brief Enumeration of onboard audio output paths.
+ *
+ * Only meaningful for the mainboard codec (card 0), which is the only
+ * output the UCM config knows how to route. A USB DAC is addressed
+ * directly by card/device and never goes through this enum.
  */
 enum class audio_output {
     unknown,    /**< Unknown state. */
@@ -28,7 +31,7 @@ enum class audio_output {
 };
 
 /**
- * @brief Manages audio routing and test tones.
+ * @brief Manages audio routing and playback of a fixed music file.
  */
 class audio_manager final {
 public:
@@ -42,10 +45,12 @@ public:
      * @brief Initializes the audio manager.
      *
      * @param device_config Device configuration.
+     * @param user_config User configuration; music_scan_path is used to locate music.flac.
      * @param zip_path Path to the OTA zip file.
-     * @return true if initialized successfully, false otherwise.
+     * @return true if the onboard UCM config loaded, false otherwise. A false return
+     * does not rule out playback: a USB DAC can still be used, see start_playback().
      */
-    bool init(const device_config_t &device_config, const std::string &zip_path);
+    bool init(const device_config_t &device_config, const user_config_t &user_config, const std::string &zip_path);
 
     /**
      * @brief Deinitializes the audio manager.
@@ -53,7 +58,7 @@ public:
     void deinit();
 
     /**
-     * @brief Checks if audio services are available.
+     * @brief Checks if the onboard UCM config loaded and its mixer is open.
      *
      * @return true if available, false otherwise.
      */
@@ -62,35 +67,38 @@ public:
     }
 
     /**
-     * @brief Starts the 1kHz test tone.
+     * @brief Starts playback of the configured music file.
      *
-     * @return true if started successfully, false otherwise.
+     * Picks a USB DAC if one is connected, otherwise routes through the
+     * onboard codec via UCM, following the current jack state.
+     *
+     * @return true if playback started (or was already running), false otherwise.
      */
-    bool start_test_tone();
+    bool start_playback();
 
     /**
-     * @brief Stops the test tone.
+     * @brief Stops playback and waits for the playback thread to exit.
      */
-    void stop_test_tone();
+    void stop_playback();
 
     /**
-     * @brief Checks if the test tone is playing.
+     * @brief Checks if a file is currently playing.
      *
      * @return true if playing, false otherwise.
      */
-    bool is_test_tone_playing() const {
-        return tone_playing_.load(std::memory_order_acquire);
+    bool is_playing() const {
+        return playing_.load(std::memory_order_acquire);
     }
 
     /**
-     * @brief Toggles the test tone playback.
+     * @brief Starts playback if idle, stops it if running.
      *
      * @return New playback state.
      */
-    bool toggle_test_tone();
+    bool toggle_playback();
 
     /**
-     * @brief Detects the current audio output.
+     * @brief Detects the current onboard audio output from jack state.
      *
      * @return Detected audio output.
      */
@@ -106,34 +114,31 @@ private:
     input_event_monitor input_monitor_;
 
     /// What the jack currently indicates, updated on every insert/remove
-    /// regardless of whether a tone is playing.
+    /// regardless of whether playback is running.
     audio_output detected_output_ = audio_output::unknown;
 
     /// What the mixer was last actually set to via ucm::apply()
     audio_output mixer_applied_output_ = audio_output::unknown;
 
-    ModernAlsa::interleaved_pcm_writer pcm_;
-    std::atomic<bool> tone_playing_{false};
+    /// Fixed file this build plays; music_scan_path + "/music.flac". No scanning yet.
+    std::string music_file_path_;
+
+    std::atomic<bool> playing_{false};
     std::atomic<bool> should_stop_{false};
-    size_t pcm_channels_ = 0;
-    double phase_ = 0.0;
-
-    // Threading
-    std::thread audio_thread_;
-    std::mutex mtx_;
-    std::condition_variable cv_;
-    std::atomic<bool> thread_running_{false};
+    std::thread playback_thread_;
     std::vector<int> cpu_affinity_;
+    bool onboard_reopen_workaround_ = false;
 
-    static constexpr size_t kMaxFillFrames = 4096;
-    static constexpr size_t kMaxChannels = 2;
-    std::array<int16_t, kMaxFillFrames * kMaxChannels> fill_buf_{};
+    /// Caps the PCM format offered to hardware regardless of what ALSA
+    /// reports supporting (see device_config_t::audio_max_bit_depth). 0
+    /// means trust the device-reported capability as-is.
+    unsigned int max_bit_depth_ = 0;
 
     // LVGL timer for jack polling only (lightweight)
     lv_timer_t *poll_timer_ = nullptr;
 
     /**
-     * @brief Applies audio routing to the target output.
+     * @brief Applies onboard audio routing to the target output via UCM.
      *
      * @param target Target audio output.
      * @return true if applied successfully, false otherwise.
@@ -141,8 +146,12 @@ private:
     bool apply_output(audio_output target);
 
     void on_input_event(const input_event_t &event);
-    void audio_thread_func();
-    void fill_buffer();
+
+    /**
+     * @brief Decodes and writes music_file_path_ to ALSA until it ends or
+     * should_stop_ is set. Runs entirely on playback_thread_.
+     */
+    void playback_thread_func();
 
     static void poll_timer_trampoline(lv_timer_t *timer);
 };

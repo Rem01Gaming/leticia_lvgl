@@ -235,11 +235,11 @@ int main(int argc, char *argv[]) {
     }
 
     Leticia::audio_manager audio;
-    if (audio.init(device_config, zip_path)) {
+    if (audio.init(device_config, user_config, zip_path)) {
         Leticia::ui_print("Audio ready (output: %s)",
                        audio.detected_output() == Leticia::audio_output::headphones ? "Headphones" : "Speaker");
     } else {
-        Leticia::ui_print("No UCM config found, audio test unavailable");
+        Leticia::ui_print("No UCM config found, onboard routing unavailable (USB DAC still usable)");
     }
 
     apply_lvgl_cpu_affinity(device_config.lvgl_thread_affinity);

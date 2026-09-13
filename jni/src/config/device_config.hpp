@@ -9,12 +9,6 @@ namespace Leticia {
 /**
  * @brief Where a front-camera cutout sits along the top edge of the screen,
  * if it intrudes into the status bar row.
- *
- * Covers hole-punch and teardrop cameras alike — their exact shape doesn't
- * matter for layout purposes, only the horizontal span to keep clear of
- * status bar content. Side-mounted cameras (e.g. under the bezel, outside
- * the display area) don't intrude on the status bar at all and should use
- * `none`.
  */
 enum class cutout_position {
     none,       ///< No cutout intrudes into the status bar row.
@@ -48,6 +42,17 @@ struct device_config_t {
     unsigned int alsa_card = 0;
 
     /**
+     * @brief Enables ModernAlsa's reopen-before-reconfigure workaround for
+     * onboard playback (see pcm::set_reopen_before_reconfigure()).
+     */
+    bool onboard_audio_reopen_workaround = false;
+
+    /**
+     * @brief Caps the PCM sample format offered to the onboard codec.
+     */
+    unsigned int audio_max_bit_depth = 0;
+
+    /**
      * @brief CPU IDs for LVGL thread pinning.
      */
     std::vector<int> lvgl_thread_affinity;
@@ -68,24 +73,17 @@ struct device_config_t {
     int status_bar_height_dp = 24;
 
     /**
-     * @brief Physical corner radius of the screen glass, in dp. 0 means
-     * square corners. Used to keep status bar content clear of rounded
-     * corners, which otherwise clip content anchored flush to the top edge.
+     * @brief Physical corner radius of the screen glass.
      */
     int screen_corner_radius_dp = 0;
 
     /**
-     * @brief Where the front camera cutout sits, if it intrudes into the
-     * status bar row. Defaults to none (no cutout, or one outside the
-     * display area such as a side-mounted camera).
+     * @brief Where the front camera cutout sits.
      */
     cutout_position camera_cutout = cutout_position::none;
 
     /**
-     * @brief Horizontal width of the camera cutout's safe zone, in dp.
-     * Ignored when camera_cutout is none. This is the span to keep clear
-     * of content, not just the visible hole/teardrop diameter — include
-     * whatever margin the panel needs.
+     * @brief Horizontal width of the camera cutout's safe zone.
      */
     int camera_cutout_width_dp = 0;
 

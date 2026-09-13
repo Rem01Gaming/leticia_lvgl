@@ -9,9 +9,9 @@
 namespace Leticia::screens {
 
 /**
- * @brief Builds the sine wave test screen: an audio toggle button and an exit button.
+ * @brief Builds the main screen: a music playback toggle button and an exit button.
  *
- * @param audio Audio manager driving the test tone button.
+ * @param audio Audio manager driving the music toggle button.
  * @param power Power manager notified on every touch to reset the activity timer.
  * @param status_bar Persistent status bar; its height reserves space at the top of this screen.
  * @param should_exit Flag set when the exit button is pressed, watched by the main loop.
