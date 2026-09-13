@@ -61,10 +61,8 @@ bool node_is_battery(const std::string &node_path) {
  * @brief Maps a power_supply status string to a battery_status.
  */
 battery_status parse_status(const std::string &text) {
-    if (text == "Charging")
+    if (text == "Charging" || text == "Full")
         return battery_status::charging;
-    if (text == "Full")
-        return battery_status::full;
     if (text == "Discharging" || text == "Not charging")
         return battery_status::discharging;
     return battery_status::unknown;
