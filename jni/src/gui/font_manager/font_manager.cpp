@@ -12,18 +12,32 @@ namespace {
 
 constexpr const char *kUprightZipEntry = "fonts/GoogleSans-VariableFont.ttf";
 constexpr const char *kItalicZipEntry = "fonts/GoogleSans-Italic-VariableFont.ttf";
+constexpr const char *kCjkZipEntry = "fonts/NotoSansCJKjp-Regular.otf";
 
-/* FreeType's own glyph cache (LV_FREETYPE_CACHE_FT_GLYPH_CNT) covers a
- * single set of frequently-used glyphs shared across every created font,
- * not the lv_font_t objects themselves -- each distinct (size, weight,
- * style) is its own font instance that must be created and freed
- * explicitly, hence this cache. */
 using font_key = std::tuple<int32_t, int32_t, bool>;
 
 std::string g_upright_path;
 std::string g_italic_path;
+std::string g_cjk_path;
+std::map<font_key, lv_font_t *> g_cjk_cache;
 std::map<font_key, lv_font_t *> g_font_cache;
 bool g_initialized = false;
+
+/**
+ * Creates the CJK fallback face at the given pixel size.
+ *
+ * @param size_px Font size in pixels.
+ * @return The created font, or nullptr on failure.
+ */
+lv_font_t *create_cjk_font(int32_t size_px) {
+    lv_font_info_t info;
+    lv_freetype_init_font_info(&info);
+    info.name = g_cjk_path.c_str();
+    info.size = static_cast<uint32_t>(size_px);
+    info.weight = static_cast<int32_t>(weight::regular);
+    info.kerning = LV_FONT_KERNING_NONE;
+    return lv_freetype_font_create_with_info(&info);
+}
 
 bool resolve_google_sans_paths(const std::string &zip_path) {
     if (!resolve_config_file_path(zip_path, "LETICIA_FONT_GOOGLESANS", kUprightZipEntry,
@@ -35,6 +49,11 @@ bool resolve_google_sans_paths(const std::string &zip_path) {
     if (!resolve_config_file_path(zip_path, "LETICIA_FONT_GOOGLESANS_ITALIC", kItalicZipEntry,
                                   "Google Sans (italic)", g_italic_path)) {
         Leticia::ui_print("font_manager: failed to resolve Google Sans italic font");
+        return false;
+    }
+
+    if (!resolve_config_file_path(zip_path, "LETICIA_FONT_CJK", kCjkZipEntry, "CJK fallback", g_cjk_path)) {
+        Leticia::ui_print("font_manager: failed to resolve CJK font");
         return false;
     }
 
@@ -81,6 +100,10 @@ void deinit() {
         lv_freetype_font_delete(font);
     g_font_cache.clear();
 
+    for (auto &[key, font] : g_cjk_cache)
+        lv_freetype_font_delete(font);
+    g_cjk_cache.clear();
+
     lv_freetype_uninit();
     g_initialized = false;
 }
@@ -107,6 +130,17 @@ const lv_font_t *get_font(int32_t size_px, weight w, bool italic) {
                           static_cast<int>(w), static_cast<int>(italic));
         return nullptr;
     }
+
+    lv_font_t *cjk = nullptr;
+    auto cjk_it = g_cjk_cache.find(key);
+    if (cjk_it != g_cjk_cache.end()) {
+        cjk = cjk_it->second;
+    } else {
+        cjk = create_cjk_font(size_px);
+        if (cjk != nullptr)
+            g_cjk_cache.emplace(key, cjk);
+    }
+    font->fallback = cjk;
 
     g_font_cache.emplace(key, font);
     return font;
