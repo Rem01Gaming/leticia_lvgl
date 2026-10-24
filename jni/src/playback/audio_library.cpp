@@ -50,9 +50,11 @@ bool is_audio_file(const std::string &path) {
     std::transform(extension.begin(), extension.end(), extension.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 
-    static const char *extensions[] = {".3ga", ".3gp", ".aac", ".ac3", ".aiff", ".alac", ".amr", ".ape", ".au",
-                                       ".caf", ".dts", ".flac", ".m4a", ".mka", ".mp2", ".mp3", ".mpc", ".oga",
-                                       ".ogg", ".opus", ".ra", ".tak", ".tta", ".voc", ".wav", ".webm", ".wma"};
+    static const char *extensions[] = {".3ga",  ".3gp",  ".aac",  ".ac3",  ".aif",  ".aifc", ".aiff", ".alac", ".amr",  ".ape",
+                                       ".au",   ".caf",  ".dff",  ".dsd",  ".dsf",  ".dts",  ".dtshd", ".eac3", ".flac",
+                                       ".m4a",  ".m4b",  ".mka",  ".mlp",  ".mp2",  ".mp3",  ".mpc",  ".mpga", ".oga",
+                                       ".ogg",  ".oma",  ".opus", ".ra",   ".rf64", ".shn",  ".spx",  ".tak",  ".thd",
+                                       ".tta",  ".voc",  ".w64",  ".wav",  ".wave", ".weba", ".webm", ".wma",  ".wv"};
     return std::any_of(std::begin(extensions), std::end(extensions),
                        [&](const char *candidate) { return extension == candidate; });
 }

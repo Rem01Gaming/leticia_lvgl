@@ -463,9 +463,8 @@ size_t next_index(player_view &view, bool manual) {
 void track_clicked_cb(lv_event_t *event) {
     auto *data = static_cast<row_data *>(lv_event_get_user_data(event));
     player_view &view = *data->view;
-    if (data->index == view.audio->current_track_index() && view.audio->is_playing())
-        view.audio->toggle_playback();
-    else
+    /* Tapping the track that is already loaded must not pause or restart it. Play/pause lives on the transport button. */
+    if (data->index != view.audio->current_track_index() || !view.audio->is_playing())
         view.audio->play_track(data->index);
     close_menus(view);
     sync_track(view);

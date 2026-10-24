@@ -7,8 +7,7 @@ if [ $# -lt 1 ]; then
 fi
 
 if [ "$1" == "clean" ]; then
-  ndk-build -j"$(nproc)" clean
-  rm -rf out
+  rm -rf out libs obj
   exit 0
 fi
 
