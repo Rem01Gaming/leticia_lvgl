@@ -15,6 +15,7 @@
 #include "config/user_config.hpp"
 #include "input/input_event.hpp"
 #include "alsa_ucm.hpp"
+#include "state_store.hpp"
 
 namespace Leticia {
 
@@ -166,14 +167,15 @@ public:
     bool toggle_playback();
 
     /**
-     * Gets the playback volume.
+     * Gets the playback volume of the active output.
      *
      * @return Volume in percent, 0 to 100.
      */
     int volume() const { return volume_percent_.load(std::memory_order_acquire); }
 
     /**
-     * Sets the playback volume. The change is applied to the running session within one audio buffer.
+     * Sets the playback volume of the active output. The change is applied to the running session within one audio buffer.
+     * Every output (speaker, headphones, each USB DAC) keeps its own volume. An output with no saved volume starts at 50 percent.
      *
      * @param percent Volume in percent. Values outside 0 to 100 are clamped.
      */
@@ -192,6 +194,20 @@ public:
      * @return true once after each change, even if the value hit a limit.
      */
     bool take_volume_changed() { return volume_changed_.exchange(false, std::memory_order_acq_rel); }
+
+    /**
+     * Gets the repeat and shuffle options. They come from the saved state until the user changes them.
+     *
+     * @return Current options.
+     */
+    playback_options_t options() const { return state_.options; }
+
+    /**
+     * Stores the repeat and shuffle options so they are saved with the playback state.
+     *
+     * @param options New options.
+     */
+    void set_options(const playback_options_t &options);
 
     const std::vector<music_track_t> &tracks() const { return tracks_; }
     size_t current_track_index() const { return current_track_index_; }
@@ -241,7 +257,7 @@ private:
     std::atomic<int64_t> seek_request_seconds_{-1};
     std::atomic<bool> resume_pending_{false};
     std::atomic<bool> via_usb_active_{false};
-    std::atomic<int> volume_percent_{100};
+    std::atomic<int> volume_percent_{state_store::kDefaultVolumePercent};
     std::atomic<bool> volume_changed_{false};
     uint32_t last_device_check_ms_ = 0;
     bool volume_up_held_ = false;
@@ -251,6 +267,16 @@ private:
     bool usb_present_ = false;
     uint64_t pcm_signature_ = 0;
 
+    playback_state_t state_;
+    std::string state_path_;
+    uint64_t volume_output_hash_ = 0;
+    bool state_ready_ = false;
+    bool track_state_valid_ = false;
+    bool state_dirty_ = false;
+    bool state_write_failed_ = false;
+    uint32_t state_save_at_ms_ = 0;
+    uint32_t last_state_save_ms_ = 0;
+
     mutable std::mutex device_info_mutex_;
     audio_device_info_t device_info_;
 
@@ -259,6 +285,54 @@ private:
     bool onboard_reopen_workaround_ = false;
     unsigned int max_bit_depth_ = 0;
     lv_timer_t *poll_timer_ = nullptr;
+
+    /**
+     * Gets the hash that identifies the output audio goes to right now.
+     *
+     * A USB DAC is identified by its product name, so two different DACs keep separate volumes.
+     *
+     * @return Output hash.
+     */
+    uint64_t current_output_hash() const;
+
+    /**
+     * Looks up the saved volume of an output.
+     *
+     * @param output_hash Output hash.
+     * @return Saved volume in percent, or the default volume if the output has none.
+     */
+    int saved_volume(uint64_t output_hash) const;
+
+    /**
+     * Switches the volume to the one of the active output if the output changed.
+     *
+     * @param announce true to raise the volume changed flag so the indicator shows the new value.
+     */
+    void sync_volume_to_output(bool announce);
+
+    /**
+     * Selects the saved track and resume position in the freshly scanned library.
+     */
+    void restore_last_track();
+
+    /**
+     * Schedules a save of the playback state. Calls close together share one write.
+     */
+    void mark_state_dirty();
+
+    /**
+     * Writes the playback state when one is due. Also schedules the periodic position save.
+     *
+     * @param now_ms Current LVGL tick in milliseconds.
+     */
+    void service_state_save(uint32_t now_ms);
+
+    /**
+     * Writes the playback state to the state file now.
+     *
+     * @param durable true to flush the data to the storage, used on exit.
+     */
+    void save_state(bool durable);
 
     /**
      * Routes the onboard mixer to the target output through UCM.

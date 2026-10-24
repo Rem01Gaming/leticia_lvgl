@@ -18,9 +18,11 @@ namespace {
 
 using namespace Leticia::units;
 using Leticia::font_manager::weight;
+using Leticia::repeat_mode;
 
 constexpr uint32_t kAppRgb = 0x1d1d1d;
 constexpr uint32_t kSurfaceRgb = 0x202020;
+constexpr uint32_t kHeaderRgb = kSurfaceRgb;
 constexpr uint32_t kActiveRgb = 0x292929;
 constexpr uint32_t kTextRgb = 0xf5f5f5;
 constexpr uint32_t kMutedRgb = 0x888888;
@@ -41,7 +43,6 @@ constexpr size_t kNoIndex = static_cast<size_t>(-1);
 constexpr lv_style_selector_t kPressed =
     static_cast<lv_style_selector_t>(LV_PART_MAIN) | static_cast<lv_style_selector_t>(LV_STATE_PRESSED);
 
-enum class repeat_mode { off, track, list };
 enum class order_mode { normal, shuffle };
 
 struct player_view;
@@ -536,6 +537,7 @@ void menu_choice_cb(lv_event_t *event) {
         view.repeat = static_cast<repeat_mode>(choice->value);
     else
         view.order = choice->value == 4 ? order_mode::shuffle : order_mode::normal;
+    view.audio->set_options({view.repeat, view.order == order_mode::shuffle});
     close_menus(view);
     sync_transport(view);
 }
@@ -874,6 +876,10 @@ void build_main_screen(Leticia::audio_manager &audio, const Leticia::gui::status
     view.audio = &audio;
     view.should_exit = &should_exit;
 
+    const Leticia::playback_options_t saved_options = audio.options();
+    view.repeat = saved_options.repeat;
+    view.order = saved_options.shuffle ? order_mode::shuffle : order_mode::normal;
+
     lv_obj_t *screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, color_of(kAppRgb), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
@@ -887,6 +893,8 @@ void build_main_screen(Leticia::audio_manager &audio, const Leticia::gui::status
 
     lv_obj_t *header = make_plain(root);
     lv_obj_set_size(header, LV_PCT(100), dp{56}.px());
+    lv_obj_set_style_bg_color(header, color_of(kHeaderRgb), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_pad_left(header, dp{14}.px(), LV_PART_MAIN);
     lv_obj_t *app_title = make_label(header, "Leticia", 17, kTextRgb, weight::semibold);
     lv_obj_align(app_title, LV_ALIGN_LEFT_MID, 0, 0);

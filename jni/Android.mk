@@ -15,7 +15,7 @@ LOCAL_LDLIBS := -lz -lm
 
 LOCAL_LDFLAGS += -static
 
-LOCAL_STATIC_LIBRARIES := lvgl ModernAlsa avformat avcodec swscale swresample avutil
+LOCAL_STATIC_LIBRARIES := lvgl ModernAlsa chibihash avformat avcodec swscale swresample avutil
 
 include $(BUILD_EXECUTABLE)
 

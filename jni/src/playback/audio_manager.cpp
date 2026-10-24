@@ -37,6 +37,8 @@ constexpr int kDeviceOpenRetries = 8;
 constexpr auto kDeviceOpenRetryDelay = std::chrono::milliseconds(60);
 constexpr int kMaxConsecutiveWriteErrors = 50;
 constexpr int kWritePollTimeoutMs = 20;
+constexpr uint32_t kStateSaveDelayMs = 1500;
+constexpr uint32_t kPositionSaveIntervalMs = 10000;
 
 /**
  * Maps an onboard output to its UCM device name.
@@ -420,6 +422,12 @@ bool audio_manager::init(const device_config_t &device_config, const user_config
     cover_size_px_ = cover_size_px;
     scan_path_ = user_config.music_scan_path;
 
+    if (!scan_path_.empty()) {
+        state_path_ = state_store::file_path(scan_path_);
+        if (state_store::load(state_path_, state_))
+            Leticia::ui_print("audio_manager: loaded playback state from %s", state_path_.c_str());
+    }
+
     std::string ucm_path;
     if (resolve_alsa_ucm_config_path(zip_path, ucm_path)) {
         ucm::parse_error err = cfg_.parse_file(ucm_path.c_str());
@@ -450,6 +458,9 @@ bool audio_manager::init(const device_config_t &device_config, const user_config
     }
 
     detected_output_ = detected_output();
+    volume_output_hash_ = current_output_hash();
+    volume_percent_.store(saved_volume(volume_output_hash_), std::memory_order_release);
+
     unsigned int usb_card = 0;
     unsigned int usb_device = 0;
     usb_present_ = alsa_scan::find_usb_playback(card_, usb_card, usb_device);
@@ -487,7 +498,92 @@ bool audio_manager::take_scan_result() {
     scanned_.clear();
     current_track_index_ = 0;
     if (!tracks_.empty()) music_file_path_ = tracks_.front().path;
+    restore_last_track();
+    state_ready_ = true;
     return true;
+}
+
+void audio_manager::restore_last_track() {
+    if (!state_.has_track) return;
+
+    for (size_t index = 0; index < tracks_.size(); ++index) {
+        if (state_store::track_hash(scan_path_, tracks_[index].path) != state_.track_hash) continue;
+
+        current_track_index_ = index;
+        music_file_path_ = tracks_[index].path;
+        track_state_valid_ = true;
+
+        const uint64_t duration = tracks_[index].duration_seconds;
+        const uint64_t remaining = state_.remaining_seconds;
+        if (duration != 0 && remaining != 0 && remaining < duration) {
+            position_seconds_.store(duration - remaining, std::memory_order_release);
+            resume_pending_.store(true, std::memory_order_release);
+        }
+        return;
+    }
+}
+
+uint64_t audio_manager::current_output_hash() const {
+    unsigned int usb_card = 0;
+    unsigned int usb_device = 0;
+    if (alsa_scan::find_usb_playback(card_, usb_card, usb_device))
+        return state_store::hash_text("usb:" + alsa_scan::card_label(usb_card));
+    return state_store::hash_text(detected_output() == audio_output::headphones ? "headphones" : "speaker");
+}
+
+int audio_manager::saved_volume(uint64_t output_hash) const {
+    const auto found = state_.volumes.find(output_hash);
+    if (found == state_.volumes.end()) return state_store::kDefaultVolumePercent;
+    return std::clamp(found->second, 0, 100);
+}
+
+void audio_manager::sync_volume_to_output(bool announce) {
+    const uint64_t output_hash = current_output_hash();
+    if (output_hash == volume_output_hash_) return;
+
+    volume_output_hash_ = output_hash;
+    volume_percent_.store(saved_volume(output_hash), std::memory_order_release);
+    if (announce) volume_changed_.store(true, std::memory_order_release);
+}
+
+void audio_manager::set_options(const playback_options_t &options) {
+    if (options == state_.options) return;
+    state_.options = options;
+    mark_state_dirty();
+}
+
+void audio_manager::mark_state_dirty() {
+    if (state_dirty_) return;
+    state_dirty_ = true;
+    state_save_at_ms_ = lv_tick_get() + kStateSaveDelayMs;
+}
+
+void audio_manager::service_state_save(uint32_t now_ms) {
+    if (!state_ready_) return;
+    if (is_audible() && now_ms - last_state_save_ms_ >= kPositionSaveIntervalMs) mark_state_dirty();
+    if (state_dirty_ && static_cast<int32_t>(now_ms - state_save_at_ms_) >= 0) save_state(false);
+}
+
+void audio_manager::save_state(bool durable) {
+    state_dirty_ = false;
+    last_state_save_ms_ = lv_tick_get();
+    if (state_path_.empty()) return;
+
+    const music_track_t *track = current_track();
+    if (track_state_valid_ && track != nullptr) {
+        const uint64_t duration = track->duration_seconds;
+        const uint64_t position = std::min(position_seconds_.load(std::memory_order_acquire), duration);
+        state_.has_track = true;
+        state_.track_hash = state_store::track_hash(scan_path_, track->path);
+        state_.remaining_seconds = duration - position;
+    }
+
+    if (state_store::save(state_path_, state_, durable)) {
+        state_write_failed_ = false;
+    } else if (!state_write_failed_) {
+        state_write_failed_ = true;
+        Leticia::ui_print("audio_manager: cannot save playback state to %s: %s", state_path_.c_str(), strerror(errno));
+    }
 }
 
 const music_track_t *audio_manager::current_track() const {
@@ -497,6 +593,9 @@ const music_track_t *audio_manager::current_track() const {
 void audio_manager::deinit() {
     scan_abort_.store(true, std::memory_order_release);
     if (scan_thread_.joinable()) scan_thread_.join();
+
+    if (state_ready_) save_state(true);
+    state_ready_ = false;
 
     stop_playback();
 
@@ -539,8 +638,11 @@ void audio_manager::mute_output() {
 }
 
 void audio_manager::set_volume(int percent) {
-    volume_percent_.store(std::clamp(percent, 0, 100), std::memory_order_release);
+    const int clamped = std::clamp(percent, 0, 100);
+    volume_percent_.store(clamped, std::memory_order_release);
+    state_.volumes[volume_output_hash_] = clamped;
     volume_changed_.store(true, std::memory_order_release);
+    mark_state_dirty();
 }
 
 void audio_manager::adjust_volume(int delta_percent) {
@@ -603,6 +705,7 @@ void audio_manager::on_input_event(const input_event_t &event) {
         else
             restart_playback();
     }
+    sync_volume_to_output(true);
     refresh_idle_device_info();
 }
 
@@ -617,12 +720,14 @@ void audio_manager::on_usb_changed(bool present) {
         Leticia::ui_print("audio_manager: USB DAC removed, pausing");
         pause_for_route_loss();
     }
+    sync_volume_to_output(true);
     refresh_idle_device_info();
 }
 
 void audio_manager::pause_for_route_loss() {
     const uint64_t resume_at = position_seconds_.load(std::memory_order_acquire);
     stop_playback();
+    sync_volume_to_output(true);
     position_seconds_.store(resume_at, std::memory_order_release);
     resume_pending_.store(true, std::memory_order_release);
     auto_paused_.store(true, std::memory_order_release);
@@ -658,6 +763,8 @@ bool audio_manager::start_playback() {
     if (!resume) position_seconds_.store(0, std::memory_order_release);
     seek_request_seconds_.store(resume && resume_at > 0 ? static_cast<int64_t>(resume_at) : -1, std::memory_order_release);
     music_file_path_ = tracks_[current_track_index_].path;
+    track_state_valid_ = true;
+    mark_state_dirty();
     playback_thread_ = std::thread(&audio_manager::playback_thread_func, this);
     return true;
 }
@@ -674,6 +781,7 @@ bool audio_manager::toggle_playback() {
     if (playing_.load(std::memory_order_acquire)) {
         const bool pause = !paused_.load(std::memory_order_acquire);
         paused_.store(pause, std::memory_order_release);
+        mark_state_dirty();
         return !pause;
     }
     return start_playback();
@@ -696,6 +804,7 @@ void audio_manager::seek_to(uint64_t seconds) {
     position_seconds_.store(seconds, std::memory_order_release);
     if (!playing_.load(std::memory_order_acquire)) resume_pending_.store(true, std::memory_order_release);
     seek_request_seconds_.store(static_cast<int64_t>(seconds), std::memory_order_release);
+    mark_state_dirty();
 }
 
 audio_device_info_t audio_manager::device_info() const {
@@ -746,6 +855,7 @@ void audio_manager::poll_timer_trampoline(lv_timer_t *timer) {
     /* Keys are read often so the volume reacts at once. The device scan stays on its slower period. */
     const uint32_t now = lv_tick_get();
     self->service_volume_repeat(now);
+    self->service_state_save(now);
     if (now - self->last_device_check_ms_ < kDevicePollIntervalMs) return;
     self->last_device_check_ms_ = now;
 
@@ -760,6 +870,7 @@ void audio_manager::poll_timer_trampoline(lv_timer_t *timer) {
         self->usb_present_ = present;
         self->on_usb_changed(present);
     } else {
+        self->sync_volume_to_output(true);
         self->refresh_idle_device_info();
     }
 }
