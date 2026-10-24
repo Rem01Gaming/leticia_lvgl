@@ -8,6 +8,7 @@
 #include <vector>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 namespace Leticia {
 
@@ -74,9 +75,9 @@ bool init_resources(const std::string &zip_path) {
         patterns += "/*' ";
     }
 
-    snprintf(cmd, sizeof(cmd), "unzip -o -q %s %s -d %s", zip_path.c_str(), patterns.c_str(), kExtractionRoot);
+    snprintf(cmd, sizeof(cmd), "unzip -o -q '%s' %s -d %s", zip_path.c_str(), patterns.c_str(), kExtractionRoot);
     int ret = system(cmd);
-    if (ret != 0) {
+    if (ret != 0 && WEXITSTATUS(ret) != 1) {
         Leticia::ui_print("config: unzip failed (exit=%d) for %s", ret, zip_path.c_str());
         return false;
     }

@@ -8,8 +8,8 @@ LOCAL_SRC_FILES := $(LOCAL_SRC_FILES:$(LOCAL_PATH)/%=%)
 
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/src
 
-LOCAL_CPPFLAGS := -std=c++23 -O3 -fno-exceptions -fno-rtti
-LOCAL_CPPFLAGS := -Wpedantic -Wall -Wextra -Werror -Wformat -Wuninitialized
+LOCAL_CPPFLAGS += -std=c++23 -O3 -fno-exceptions -fno-rtti
+LOCAL_CPPFLAGS += -Wpedantic -Wall -Wextra -Werror -Wformat -Wuninitialized
 
 LOCAL_LDLIBS := -lz -lm
 

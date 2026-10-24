@@ -1,6 +1,7 @@
 #include "power/battery_uevent_listener.hpp"
 #include "util/updater_proto.hpp"
 
+#include <cerrno>
 #include <cstring>
 #include <linux/netlink.h>
 #include <poll.h>
@@ -83,8 +84,11 @@ void battery_uevent_listener::stop() {
 }
 
 bool battery_uevent_listener::message_matches(const char *buf, size_t len) const {
-    // Uevent payload is a sequence of NUL-separated "KEY=VALUE" strings.
-    // We only care that SUBSYSTEM=power_supply and the path contains our node name.
+    constexpr char kSubsystem[] = "SUBSYSTEM=power_supply";
+    constexpr char kNamePrefix[] = "POWER_SUPPLY_NAME=";
+    constexpr size_t kSubsystemLen = sizeof(kSubsystem) - 1;
+    constexpr size_t kNamePrefixLen = sizeof(kNamePrefix) - 1;
+
     bool is_power_supply = false;
     bool matches_node = node_name_.empty();
 
@@ -93,10 +97,10 @@ bool battery_uevent_listener::message_matches(const char *buf, size_t len) const
         const char *field = buf + offset;
         size_t field_len = strnlen(field, len - offset);
 
-        if (strncmp(field, "SUBSYSTEM=power_supply", field_len) == 0)
+        if (field_len == kSubsystemLen && memcmp(field, kSubsystem, kSubsystemLen) == 0)
             is_power_supply = true;
-        else if (!matches_node && strncmp(field, "POWER_SUPPLY_NAME=", 18) == 0 &&
-                 std::string(field + 18, field_len - 18) == node_name_)
+        else if (field_len > kNamePrefixLen && memcmp(field, kNamePrefix, kNamePrefixLen) == 0 &&
+                 node_name_.compare(0, std::string::npos, field + kNamePrefixLen, field_len - kNamePrefixLen) == 0)
             matches_node = true;
 
         offset += field_len + 1;

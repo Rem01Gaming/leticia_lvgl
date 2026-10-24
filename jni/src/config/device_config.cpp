@@ -77,6 +77,19 @@ void parse_ini(const std::string &text, device_config_t &out) {
             continue;
         }
 
+        if (key == "fb_swap_rb") {
+            if (val == "auto" || val.empty()) {
+                out.fb_swap_rb.reset();
+            } else if (val == "1" || val == "true" || val == "yes") {
+                out.fb_swap_rb = true;
+            } else if (val == "0" || val == "false" || val == "no") {
+                out.fb_swap_rb = false;
+            } else {
+                Leticia::ui_print("device_config: invalid fb_swap_rb '%s', expected auto/true/false", val.c_str());
+            }
+            continue;
+        }
+
         if (key == "alsa_card") {
             out.alsa_card = static_cast<unsigned int>(atoi(val.c_str()));
             continue;
@@ -184,6 +197,10 @@ bool load_device_config_from_file(const std::string &path, device_config_t &out)
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     rewind(f);
+    if (size < 0) {
+        fclose(f);
+        return false;
+    }
 
     std::string text;
     text.resize(static_cast<size_t>(size));

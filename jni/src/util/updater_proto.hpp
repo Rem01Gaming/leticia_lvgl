@@ -1,11 +1,12 @@
 #pragma once
 
-#include <cstdio>
-
 namespace Leticia {
 
 /**
- * @brief Handles communication with the recovery process.
+ * Owns the command pipe to the recovery process.
+ *
+ * Every write is non-blocking. The recovery process stops while the UI runs,
+ * so nobody reads the pipe. A blocking write would freeze the calling thread.
  */
 class updater_proto final {
 public:
@@ -16,70 +17,71 @@ public:
     updater_proto &operator=(const updater_proto &) = delete;
 
     /**
-     * @brief Attaches to the recovery command pipe.
+     * Attaches to the recovery command pipe and makes it non-blocking.
      *
      * @param fd File descriptor received from the recovery process.
-     * @return true if attached successfully, false otherwise.
+     * @return true if the descriptor is valid, false otherwise.
      */
     bool attach(int fd);
 
     /**
-     * @brief Closes the command pipe.
+     * Closes the command pipe.
      */
     void close();
 
     /**
-     * @brief Gets the internal command pipe.
+     * Writes one complete protocol message without blocking.
      *
-     * @return The command pipe FILE pointer.
+     * The message is dropped if the pipe is full or closed.
+     *
+     * @param data Message bytes.
+     * @param size Number of bytes in the message. Must not exceed 4096.
      */
-    FILE *get_pipe() const { return pipe_; }
+    void write_message(const char *data, int size) const;
 
 private:
-    FILE *pipe_ = nullptr;
+    int fd_ = -1;
 };
 
-} // namespace Leticia
+/**
+ * Sets the global updater protocol instance.
+ *
+ * @param p Pointer to the updater protocol instance.
+ */
+void set_updater_proto(updater_proto *p);
 
-namespace Leticia {
-    /**
-     * @brief Sets the global updater protocol instance.
-     *
-     * @param p Pointer to the updater protocol instance.
-     */
-    void set_updater_proto(updater_proto *p);
+/**
+ * Clears the global updater protocol instance.
+ */
+void clear_updater_proto();
 
-    /**
-     * @brief Clears the global updater protocol instance.
-     */
-    void clear_updater_proto();
+/**
+ * Prints a message to the recovery console. Safe to call from any thread.
+ *
+ * @param fmt Printf style format string.
+ */
+void ui_print(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
-    /**
-     * @brief Prints a message to the recovery console using the global instance.
-     *
-     * @param fmt Printf style format string.
-     */
-    void ui_print(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+/**
+ * Prints an error to the recovery console. Safe to call from any thread.
+ *
+ * @param fmt Printf style format string.
+ */
+void ui_error(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
-    /**
-     * @brief Prints a error to the recovery console using the global instance.
-     *
-     * @param fmt Printf style format string.
-     */
-    void ui_error(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+/**
+ * Prints a warning to the recovery console. Safe to call from any thread.
+ *
+ * @param fmt Printf style format string.
+ */
+void ui_warning(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
-    /**
-     * @brief Prints a warning to the recovery console using the global instance.
-     *
-     * @param fmt Printf style format string.
-     */
-    void ui_warning(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+/**
+ * Sets the recovery progress bar.
+ *
+ * @param fraction Progress fraction from 0 to 1.
+ * @param seconds Estimated time for the segment.
+ */
+void ui_set_progress(float fraction, float seconds);
 
-    /**
-     * @brief Sets the recovery progress bar using the global instance.
-     *
-     * @param fraction Progress fraction from 0 to 1.
-     * @param seconds Estimated time for the segment.
-     */
-    void ui_set_progress(float fraction, float seconds);
 } // namespace Leticia

@@ -1,9 +1,11 @@
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include <unistd.h>
 #include <pthread.h>
@@ -54,14 +56,26 @@ void lvgl_log_cb(lv_log_level_t level, const char *buf) {
 }
 #endif
 
+std::atomic<Leticia::power_manager *> g_power{nullptr};
+
 /**
- * @brief Requests an exit from the safety exit watchdog thread.
+ * Requests a normal shutdown from the safety watchdog thread.
  *
- * Runs on the watchdog thread, not the LVGL main thread, so it must stay lock-free.
+ * Runs on the watchdog thread, so it only sets an atomic flag.
  */
 void safety_exit_cb() {
-    Leticia::ui_print("Safety exit long-press triggered, closing UI");
     g_should_exit.store(true, std::memory_order_relaxed);
+}
+
+/**
+ * Prepares the display for recovery before the watchdog ends the process.
+ *
+ * Runs on the watchdog thread. The power manager only uses system calls here.
+ */
+void force_exit_cb() {
+    Leticia::power_manager *power = g_power.load(std::memory_order_acquire);
+    if (power != nullptr)
+        power->restore_display();
 }
 
 /**
@@ -190,6 +204,7 @@ int main(int argc, char *argv[]) {
 
     signal(SIGINT, request_exit);
     signal(SIGTERM, request_exit);
+    srand(static_cast<unsigned int>(time(nullptr)));
 
     lv_init();
 
@@ -210,6 +225,9 @@ int main(int argc, char *argv[]) {
     Leticia::parent_mute mute;
     mute.freeze();
 
+    Leticia::safety_exit_monitor safety_exit;
+    safety_exit.start(safety_exit_cb, force_exit_cb);
+
     lv_display_t *disp = open_fbdev_display();
     if (disp == nullptr) {
         Leticia::ui_print("error: could not open a framebuffer device");
@@ -217,13 +235,22 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    apply_display_density(disp);
+
     lv_indev_t *indev = open_touch_indev();
+    if (indev != nullptr)
+        lv_indev_set_scroll_limit(indev, static_cast<uint8_t>(std::min<int32_t>(Leticia::units::dp{10}.px(), 255)));
 
     Leticia::device_config_t device_config;
     if (Leticia::load_device_config(zip_path, device_config)) {
         Leticia::ui_print("Loaded device config (backlight=%s)", device_config.backlight_path.c_str());
     } else {
         Leticia::ui_print("No device config found, using auto-detection");
+    }
+
+    if (device_config.fb_swap_rb.has_value()) {
+        Leticia::ui_print("Display: fb_swap_rb override from device config = %s", *device_config.fb_swap_rb ? "on" : "off");
+        lv_linux_fbdev_set_swap_rb(disp, *device_config.fb_swap_rb);
     }
 
     Leticia::user_config_t user_config;
@@ -235,7 +262,7 @@ int main(int argc, char *argv[]) {
     }
 
     Leticia::audio_manager audio;
-    if (audio.init(device_config, user_config, zip_path)) {
+    if (audio.init(device_config, user_config, zip_path, Leticia::screens::cover_size_px())) {
         Leticia::ui_print("Audio ready (output: %s)",
                        audio.detected_output() == Leticia::audio_output::headphones ? "Headphones" : "Speaker");
     } else {
@@ -243,8 +270,6 @@ int main(int argc, char *argv[]) {
     }
 
     apply_lvgl_cpu_affinity(device_config.lvgl_thread_affinity);
-
-    apply_display_density(disp);
 
     Leticia::battery_monitor battery;
     if (battery.init(device_config)) {
@@ -263,14 +288,12 @@ int main(int argc, char *argv[]) {
     Leticia::power_manager power;
     power.init(disp, device_config);
     power.set_touch_indev(indev);
+    g_power.store(&power, std::memory_order_release);
 
     Leticia::gui::status_bar status_bar;
     status_bar.init(battery, power, user_config, device_config);
 
-    Leticia::screens::build_main_screen(audio, power, status_bar, g_should_exit);
-
-    Leticia::safety_exit_monitor safety_exit;
-    safety_exit.start(safety_exit_cb);
+    Leticia::screens::build_main_screen(audio, status_bar, g_should_exit);
 
     Leticia::ui_print("Entering main loop (draw_unit_cnt=%d)", LV_DRAW_SW_DRAW_UNIT_CNT);
 
@@ -290,23 +313,24 @@ int main(int argc, char *argv[]) {
         usleep(idle_ms * 1000);
     }
 
-    safety_exit.stop();
+    safety_exit.begin_shutdown(5000);
 
     status_bar.deinit();
     battery.deinit();
-    power.deinit();
     audio.deinit();
+    g_power.store(nullptr, std::memory_order_release);
+    power.deinit();
 
     if (indev != nullptr)
         lv_evdev_delete(indev);
 
-    Leticia::font_manager::deinit();
-
     lv_display_delete(disp);
+    Leticia::font_manager::deinit();
 
     mute.resume();
 
     Leticia::ui_print("Leticia UI closed, returning to recovery");
+    safety_exit.stop();
     Leticia::clear_updater_proto();
     proto.close();
 

@@ -122,7 +122,7 @@ private:
     input_event_cb_t callback_;
 
     void dispatch(input_event_type type) const;
-    void poll_key_source(int fd);
+    bool poll_key_source(int fd);
     void poll_usb();
 
     static bool node_reports_watched_bits(int fd);

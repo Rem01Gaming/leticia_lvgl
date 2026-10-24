@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -97,14 +98,18 @@ private:
     int percent_ = 0;
     battery_status status_ = battery_status::unknown;
     lv_timer_t *poll_timer_ = nullptr;
+    std::atomic<bool> uevent_pending_{false};
+    uint32_t fallback_interval_ms_ = 30000;
+    uint32_t elapsed_ms_ = 0;
     std::function<void()> on_change_;
     battery_uevent_listener uevent_listener_;
 
     bool find_node(const device_config_t &config);
     void poll();
 
+    void tick();
+
     static void poll_timer_trampoline(lv_timer_t *timer);
-    static void async_poll_trampoline(void *self);
 };
 
 } // namespace Leticia

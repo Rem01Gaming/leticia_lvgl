@@ -39,6 +39,18 @@ lv_result_t lv_linux_fbdev_set_file(lv_display_t * disp, const char * file);
  */
 void lv_linux_fbdev_set_force_refresh(lv_display_t * disp, bool enabled);
 
+/**
+ * Exchange red and blue when copying pixels to the framebuffer (24 and 32 bpp only).
+ *
+ * lv_linux_fbdev_set_file() already detects this from the channel offsets the kernel reports,
+ * so it only needs to be called to override that detection, e.g. when a driver reports the
+ * wrong layout. Call it after lv_linux_fbdev_set_file() and before the first refresh.
+ *
+ * @param disp      the display created by lv_linux_fbdev_create()
+ * @param enabled   true to swap red and blue, false to copy pixels unchanged
+ */
+void lv_linux_fbdev_set_swap_rb(lv_display_t * disp, bool enabled);
+
 /**********************
  *      MACROS
  **********************/

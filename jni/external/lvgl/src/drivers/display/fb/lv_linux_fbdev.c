@@ -71,6 +71,8 @@ typedef struct {
     bool force_refresh;
     uint8_t * draw_buf_1;
     uint8_t * draw_buf_2;
+    bool swap_rb;           /**< Swap red and blue while copying to the framebuffer */
+    uint8_t * swap_row;     /**< One scanline of scratch space used when swap_rb is set */
 } lv_linux_fb_t;
 
 /**********************
@@ -80,6 +82,7 @@ typedef struct {
 static void del_event_cb(lv_event_t * e);
 static void flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * color_p);
 static uint32_t tick_get_cb(void);
+static void write_row(lv_linux_fb_t * dsc, uint32_t fb_pos, const uint8_t * src, int32_t px_count, uint32_t px_size);
 
 /**********************
  *  STATIC VARIABLES
@@ -223,6 +226,32 @@ lv_result_t lv_linux_fbdev_set_file(lv_display_t * disp, const char * file)
             return LV_RESULT_INVALID;
     }
 
+#if !LV_LINUX_FBDEV_BSD
+    /* The switch above only looks at the bit depth. LVGL's RGB888 and XRGB8888 store blue in the
+     * lowest byte (B, G, R[, X] in memory), i.e. red at bit 16 and blue at bit 0 of the pixel.
+     * Many MediaTek framebuffers are the other way around (R, G, B[, A] in memory: red at bit 0,
+     * blue at bit 16). LVGL has no native format for that layout, so red and blue would come out
+     * swapped on screen. Read the real layout from the kernel and swap the channels on flush. */
+    {
+        const struct fb_var_screeninfo * v = &dsc->vinfo;
+        const bool true_color = (v->bits_per_pixel == 24 || v->bits_per_pixel == 32) &&
+                                v->red.length == 8 && v->green.length == 8 && v->blue.length == 8;
+        const bool bgr_order = true_color && v->red.offset == 0 && v->blue.offset == 16;
+
+        /* Warn level on purpose: it is the only way to see the real layout in the log when
+         * the colors look wrong. */
+        LV_LOG_WARN("fbdev %ux%u %ubpp R%u/%u G%u/%u B%u/%u A%u/%u -> %s",
+                    (unsigned int) v->xres, (unsigned int) v->yres, (unsigned int) v->bits_per_pixel,
+                    (unsigned int) v->red.offset, (unsigned int) v->red.length,
+                    (unsigned int) v->green.offset, (unsigned int) v->green.length,
+                    (unsigned int) v->blue.offset, (unsigned int) v->blue.length,
+                    (unsigned int) v->transp.offset, (unsigned int) v->transp.length,
+                    bgr_order ? "R/B swap on" : "native order");
+
+        lv_linux_fbdev_set_swap_rb(disp, bgr_order);
+    }
+#endif /* !LV_LINUX_FBDEV_BSD */
+
     int32_t hor_res = dsc->vinfo.xres;
     int32_t ver_res = dsc->vinfo.yres;
     int32_t width = dsc->vinfo.width;
@@ -265,6 +294,35 @@ void lv_linux_fbdev_set_force_refresh(lv_display_t * disp, bool enabled)
     dsc->force_refresh = enabled;
 }
 
+void lv_linux_fbdev_set_swap_rb(lv_display_t * disp, bool enabled)
+{
+    LV_CHECK_ARG(disp != NULL, return);
+    lv_linux_fb_t * dsc = lv_display_get_driver_data(disp);
+    if(dsc == NULL) return;
+
+    /* Whatever happens below, start from a clean state so a failure leaves the plain copy path active. */
+    dsc->swap_rb = false;
+    if(dsc->swap_row != NULL) {
+        lv_free(dsc->swap_row);
+        dsc->swap_row = NULL;
+    }
+    if(!enabled) return;
+
+    const uint32_t px_size = (uint32_t) dsc->vinfo.bits_per_pixel >> 3;
+    if(dsc->vinfo.xres == 0 || (px_size != 3 && px_size != 4)) {
+        LV_LOG_WARN("R/B swap needs an opened 24 or 32 bpp framebuffer (call it after lv_linux_fbdev_set_file)");
+        return;
+    }
+
+    /* A flushed row is never wider than the physical framebuffer, because flush_cb clips to it. */
+    dsc->swap_row = lv_malloc((size_t) dsc->vinfo.xres * px_size);
+    if(dsc->swap_row == NULL) {
+        LV_LOG_ERROR("out of memory for the R/B swap row buffer");
+        return;
+    }
+    dsc->swap_rb = true;
+}
+
 /**********************
  *   STATIC FUNCTIONS
  **********************/
@@ -278,6 +336,43 @@ static void write_to_fb(lv_linux_fb_t * dsc, uint32_t fb_pos, const void * data,
     if(pwrite(dsc->fbfd, data, sz, fb_pos) < 0)
         LV_LOG_ERROR("write failed: %d", errno);
 #endif
+}
+
+/**
+ * Copy one scanline into the framebuffer.
+ * With swap_rb set, red and blue are exchanged first, into a small scratch row, so the
+ * framebuffer memory itself (usually uncached) only ever sees one sequential write.
+ */
+static void write_row(lv_linux_fb_t * dsc, uint32_t fb_pos, const uint8_t * src, int32_t px_count, uint32_t px_size)
+{
+    const size_t bytes = (size_t) px_count * px_size;
+
+    if(!dsc->swap_rb || dsc->swap_row == NULL || (px_size != 3 && px_size != 4)) {
+        write_to_fb(dsc, fb_pos, src, bytes);
+        return;
+    }
+
+    uint8_t * dst = dsc->swap_row;
+    if(px_size == 4) {
+        for(int32_t i = 0; i < px_count; i++) {
+            dst[0] = src[2];
+            dst[1] = src[1];
+            dst[2] = src[0];
+            dst[3] = src[3];
+            src += 4;
+            dst += 4;
+        }
+    }
+    else {
+        for(int32_t i = 0; i < px_count; i++) {
+            dst[0] = src[2];
+            dst[1] = src[1];
+            dst[2] = src[0];
+            src += 3;
+            dst += 3;
+        }
+    }
+    write_to_fb(dsc, fb_pos, dsc->swap_row, bytes);
 }
 
 static void del_event_cb(lv_event_t * e)
@@ -299,6 +394,7 @@ static void del_event_cb(lv_event_t * e)
         close(dsc->fbfd);
         dsc->fbfd = -1;
     }
+    if(dsc->swap_row) lv_free(dsc->swap_row);
     if(dsc->rotated_buf) lv_free(dsc->rotated_buf);
     if(dsc->draw_buf_1) lv_free(dsc->draw_buf_1);
     if(dsc->draw_buf_2) lv_free(dsc->draw_buf_2);
@@ -403,7 +499,7 @@ static void flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * colo
             (clipped_area.x1 - disp->offset_x) * px_size +
             (clipped_area.y1 - disp->offset_y) * disp->hor_res * px_size;
         for(int32_t y = clipped_area.y1; y <= clipped_area.y2; y++) {
-            write_to_fb(dsc, fb_pos, &color_p[color_pos], w * px_size);
+            write_row(dsc, fb_pos, &color_p[color_pos], w, px_size);
             fb_pos += dsc->finfo.line_length;
             color_pos += disp->hor_res * px_size;
         }
@@ -417,7 +513,7 @@ static void flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * colo
         color_p += y_offset * stride + x_offset * px_size;
 
         for(int32_t y = clipped_area.y1; y <= clipped_area.y2; y++) {
-            write_to_fb(dsc, fb_pos, color_p, w * px_size);
+            write_row(dsc, fb_pos, color_p, w, px_size);
             fb_pos += dsc->finfo.line_length;
             color_p += stride;
         }

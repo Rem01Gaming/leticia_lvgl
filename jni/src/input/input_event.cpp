@@ -105,7 +105,7 @@ bool input_event_monitor::open() {
             char path[288];
             snprintf(path, sizeof(path), "%s/%s", kInputDir, entry->d_name);
 
-            int fd = ::open(path, O_RDONLY | O_NONBLOCK);
+            int fd = ::open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
             if (fd < 0)
                 continue;
 
@@ -170,7 +170,7 @@ void input_event_monitor::dispatch(input_event_type type) const {
         callback_(input_event_t{type, now_ms()});
 }
 
-void input_event_monitor::poll_key_source(int fd) {
+bool input_event_monitor::poll_key_source(int fd) {
     struct input_event ev;
     ssize_t n;
 
@@ -215,9 +215,11 @@ void input_event_monitor::poll_key_source(int fd) {
         }
     }
 
-    if (n < 0 && errno != EAGAIN) {
-        Leticia::ui_print("input_event_monitor: read failed: %s", strerror(errno));
+    if (n < 0 && errno != EAGAIN && errno != EINTR) {
+        Leticia::ui_print("input_event_monitor: dropping node, read failed: %s", strerror(errno));
+        return false;
     }
+    return true;
 }
 
 void input_event_monitor::poll_usb() {
@@ -243,8 +245,13 @@ void input_event_monitor::poll_usb() {
 }
 
 void input_event_monitor::poll() {
-    for (auto &source : key_sources_)
-        poll_key_source(source.fd);
+    for (size_t i = key_sources_.size(); i-- > 0;) {
+        if (poll_key_source(key_sources_[i].fd))
+            continue;
+
+        ::close(key_sources_[i].fd);
+        key_sources_.erase(key_sources_.begin() + static_cast<std::ptrdiff_t>(i));
+    }
 
     poll_usb();
 }

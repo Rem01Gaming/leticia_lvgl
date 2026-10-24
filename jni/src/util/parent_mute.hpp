@@ -3,7 +3,7 @@
 namespace Leticia {
 
 /**
- * @brief Freezes the parent process during execution.
+ * Freezes the parent process during execution.
  */
 class parent_mute final {
 public:
@@ -14,14 +14,22 @@ public:
     parent_mute &operator=(const parent_mute &) = delete;
 
     /**
-     * @brief Freezes the parent process.
+     * Freezes the parent process.
      */
     void freeze();
 
     /**
-     * @brief Resumes the parent process.
+     * Resumes the parent process.
      */
     void resume();
+
+    /**
+     * Resumes the parent process from a signal handler or a watchdog thread.
+     *
+     * This function only calls async-signal-safe functions. Call it before
+     * _exit(), because _exit() skips the atexit handlers.
+     */
+    static void emergency_resume();
 };
 
 } // namespace Leticia

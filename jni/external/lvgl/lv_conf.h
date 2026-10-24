@@ -680,7 +680,7 @@
  *  - LV_LOG_LEVEL_USER: only logs added by the user
  *  - LV_LOG_LEVEL_NONE: nothing is logged
  */
-#define LV_LOG_LEVEL LV_LOG_LEVEL_INFO
+#define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
 /** If not set, the user needs to register a callback with lv_log_register_print_cb(). */
 #define LV_LOG_PRINTF 0
 /** Add a timestamp to each log */
@@ -742,7 +742,7 @@
 /** Avoids repeatedly opening and decoding the same images, at the cost of RAM.
  *  Of little benefit with only the built-in image formats.
  */
-#define LV_CACHE_DEF_SIZE (128 * 1024 * 1024U)
+#define LV_CACHE_DEF_SIZE (8 * 1024 * 1024U)
 /** Avoids repeatedly reading image headers, at the cost of RAM.
  *  Of little benefit with only the built-in image formats.
  */

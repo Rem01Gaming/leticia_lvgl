@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ $# -lt 1 ]; then
+  echo "Usage: $0 <clean|build> [device_config]"
+  exit 1
+fi
+
 if [ "$1" == "clean" ]; then
   ndk-build -j"$(nproc)" clean
   rm -rf out

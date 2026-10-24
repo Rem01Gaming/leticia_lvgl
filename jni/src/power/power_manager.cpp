@@ -25,6 +25,7 @@ namespace Leticia {
         constexpr int kBrightnessFadeMs = 120;
         constexpr int kBrightnessFadeFastMs = 80;
         constexpr int kBrightnessFadeStepMs = 15;
+        constexpr uint64_t kTouchWakeWindowMs = 400;
 
         uint64_t now_ms() {
             struct timespec ts;
@@ -375,11 +376,21 @@ namespace Leticia {
 
         self->input_monitor_.poll();
 
+        const uint64_t now = now_ms();
+        uint64_t idle_ms = now - self->last_activity_time_ms_;
+        const uint64_t touch_idle_ms = lv_display_get_inactive_time(self->disp_);
+        if (touch_idle_ms < idle_ms)
+            idle_ms = touch_idle_ms;
+
+        if (self->current_state_ == power_state::dimmed && touch_idle_ms < kTouchWakeWindowMs) {
+            self->set_state(power_state::on);
+            return;
+        }
+
         if (self->sleep_timeout_sec_ == 0 && self->dim_timeout_sec_ == 0)
             return;
 
-        uint64_t now = now_ms();
-        uint64_t idle_sec = (now - self->last_activity_time_ms_) / 1000;
+        const uint64_t idle_sec = idle_ms / 1000;
 
         if (self->current_state_ == power_state::on) {
             bool dim_enabled = self->dim_timeout_sec_ > 0 && self->dim_timeout_sec_ < self->sleep_timeout_sec_;
@@ -426,7 +437,7 @@ namespace Leticia {
         }
         fb_path_ = fb_path;
 
-        fb_fd_ = open(fb_path_.c_str(), O_RDWR);
+        fb_fd_ = open(fb_path_.c_str(), O_RDWR | O_CLOEXEC);
         if (fb_fd_ < 0) {
             Leticia::ui_print("Warning: Could not open framebuffer %s for power control", fb_path_.c_str());
         } else {
@@ -596,9 +607,27 @@ void power_manager::set_pwr_button_enabled(bool enabled) {
     Leticia::ui_print("Power button %s", enabled ? "enabled" : "disabled");
 }
 
+void power_manager::restore_display() {
+    if (!backlight_path_.empty()) {
+        int fd = open(backlight_path_.c_str(), O_WRONLY | O_CLOEXEC);
+        if (fd >= 0) {
+            char buf[16];
+            int len = snprintf(buf, sizeof(buf), "%d", max_brightness_);
+            if (len > 0)
+                (void) !write(fd, buf, static_cast<size_t>(len));
+            close(fd);
+        }
+    }
+
+    if (fb_fd_ >= 0)
+        (void) !ioctl(fb_fd_, FBIOBLANK, FB_BLANK_UNBLANK);
+}
+
 void power_manager::deinit() {
     if (!initialized_)
         return;
+
+    restore_display();
 
     if (activity_timer_ != nullptr) {
         lv_timer_delete(activity_timer_);

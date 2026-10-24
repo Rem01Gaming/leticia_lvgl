@@ -12,6 +12,7 @@ namespace Leticia {
 namespace {
 
 constexpr const char *kPowerSupplyDir = "/sys/class/power_supply";
+constexpr uint32_t kTickMs = 500;
 
 /**
  * @brief Reads an integer value from a sysfs file.
@@ -61,8 +62,10 @@ bool node_is_battery(const std::string &node_path) {
  * @brief Maps a power_supply status string to a battery_status.
  */
 battery_status parse_status(const std::string &text) {
-    if (text == "Charging" || text == "Full")
+    if (text == "Charging")
         return battery_status::charging;
+    if (text == "Full")
+        return battery_status::full;
     if (text == "Discharging" || text == "Not charging")
         return battery_status::discharging;
     return battery_status::unknown;
@@ -126,10 +129,12 @@ bool battery_monitor::init(const device_config_t &config, uint32_t fallback_poll
     if (!find_node(config))
         return false;
 
+    fallback_interval_ms_ = fallback_poll_interval_ms;
+    elapsed_ms_ = 0;
     poll();
 
     bool event_driven = uevent_listener_.start(node_basename(node_path_), [this]() {
-        lv_async_call(async_poll_trampoline, this);
+        uevent_pending_.store(true, std::memory_order_release);
     });
 
     if (event_driven)
@@ -137,15 +142,12 @@ bool battery_monitor::init(const device_config_t &config, uint32_t fallback_poll
     else
         Leticia::ui_print("battery_monitor: uevent listener unavailable, polling only");
 
-    // The poll timer always runs, even in event-driven mode, as a backstop
-    // against missed or unsupported uevents on some kernels.
-    poll_timer_ = lv_timer_create(poll_timer_trampoline, fallback_poll_interval_ms, this);
+    poll_timer_ = lv_timer_create(poll_timer_trampoline, kTickMs, this);
     return true;
 }
 
 void battery_monitor::deinit() {
     uevent_listener_.stop();
-    lv_async_call_cancel(async_poll_trampoline, this);
 
     if (poll_timer_ != nullptr) {
         lv_timer_delete(poll_timer_);
@@ -171,13 +173,19 @@ void battery_monitor::poll() {
         on_change_();
 }
 
-void battery_monitor::poll_timer_trampoline(lv_timer_t *timer) {
-    auto *self = static_cast<battery_monitor *>(lv_timer_get_user_data(timer));
-    self->poll();
+void battery_monitor::tick() {
+    elapsed_ms_ += kTickMs;
+    const bool event_seen = uevent_pending_.exchange(false, std::memory_order_acq_rel);
+    if (!event_seen && elapsed_ms_ < fallback_interval_ms_)
+        return;
+
+    elapsed_ms_ = 0;
+    poll();
 }
 
-void battery_monitor::async_poll_trampoline(void *self) {
-    static_cast<battery_monitor *>(self)->poll();
+void battery_monitor::poll_timer_trampoline(lv_timer_t *timer) {
+    auto *self = static_cast<battery_monitor *>(lv_timer_get_user_data(timer));
+    self->tick();
 }
 
 } // namespace Leticia

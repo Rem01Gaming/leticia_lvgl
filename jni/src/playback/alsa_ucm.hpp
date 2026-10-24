@@ -239,4 +239,21 @@ public:
  */
 result apply(const ModernAlsa::mixer &mx, const config &cfg, const char *verb_name, const char *device_name, const char *previous_device = nullptr) noexcept;
 
+/**
+ * @brief Reverses (disables) a single device's directives, e.g. to mute an
+ * analog output path before it is torn down.
+ *
+ * Unlike apply(), this never touches verb-level directives - it only
+ * inverts the named device's own directive list (amp switches, muxes,
+ * etc.), the same way apply() tears down a conflicting previous device
+ * internally.
+ *
+ * @param mx Open mixer instance.
+ * @param cfg Parsed configuration.
+ * @param verb_name Name of the active verb.
+ * @param device_name Name of the device to mute. A null pointer is a no-op.
+ * @return Operation result.
+ */
+result mute(const ModernAlsa::mixer &mx, const config &cfg, const char *verb_name, const char *device_name) noexcept;
+
 } // namespace ucm

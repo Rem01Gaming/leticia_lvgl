@@ -10,6 +10,7 @@ namespace Leticia {
 namespace {
 
 constexpr const char *kUserConfigName = "config/user.conf";
+constexpr const char *kDefaultMusicPath = "/sdcard/Music";
 
 void parse_ini(const std::string &text, user_config_t &out) {
     size_t pos = 0;
@@ -76,6 +77,10 @@ bool load_user_config_from_file(const std::string &path, user_config_t &out) {
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     rewind(f);
+    if (size < 0) {
+        fclose(f);
+        return false;
+    }
 
     std::string text;
     text.resize(static_cast<size_t>(size));
@@ -83,6 +88,8 @@ bool load_user_config_from_file(const std::string &path, user_config_t &out) {
     fclose(f);
 
     parse_ini(text, out);
+    if (out.music_scan_path.empty())
+        out.music_scan_path = kDefaultMusicPath;
     return true;
 }
 

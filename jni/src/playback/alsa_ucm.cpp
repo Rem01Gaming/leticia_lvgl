@@ -579,4 +579,19 @@ result apply(const ModernAlsa::mixer &mx, const config &cfg, const char *verb_na
     return {0};
 }
 
+result mute(const ModernAlsa::mixer &mx, const config &cfg, const char *verb_name, const char *device_name) noexcept {
+    if (device_name == nullptr) return {0};
+
+    const verb *v = cfg.find_verb(verb_name);
+    if (v == nullptr) return {ENOENT};
+
+    const device *d = v->find_device(device_name);
+    if (d == nullptr) return {ENOENT};
+
+    int err = 0;
+    if (!apply_sequence_inverted(mx, d->directives, d->directive_count, &err)) return {err};
+
+    return {0};
+}
+
 } // namespace ucm

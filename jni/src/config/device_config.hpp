@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,15 @@ struct device_config_t {
      * @brief Whether hardware screen blanking is supported.
      */
     bool screen_blank_supported = false;
+
+    /**
+     * @brief Forces red/blue swapping on or off when drawing to the framebuffer.
+     *
+     * Unset (the default) keeps the automatic detection from the channel layout
+     * the kernel reports. Set it only when the detected layout is wrong, i.e. the
+     * colors still look swapped (try true) or turned swapped after the fix (try false).
+     */
+    std::optional<bool> fb_swap_rb;
 
     /**
      * @brief ALSA card index for audio output.

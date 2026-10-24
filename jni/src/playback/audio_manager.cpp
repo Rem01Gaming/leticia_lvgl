@@ -1,4 +1,6 @@
 #include "audio_manager.hpp"
+#include "alsa_scan.hpp"
+#include "audio_library.hpp"
 #include "resampler.hpp"
 #include "util/updater_proto.hpp"
 
@@ -7,9 +9,11 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
-#include <dirent.h>
+#include <iterator>
+#include <poll.h>
 #include <sched.h>
 #include <sys/syscall.h>
+#include <tuple>
 #include <unistd.h>
 #include <vector>
 
@@ -23,9 +27,18 @@ namespace Leticia {
 
 namespace {
 
-constexpr uint32_t kJackPollIntervalMs = 250;
-constexpr size_t kFallbackChannels = 2;
+constexpr uint32_t kDevicePollIntervalMs = 250;
+constexpr int kDeviceOpenRetries = 8;
+constexpr auto kDeviceOpenRetryDelay = std::chrono::milliseconds(60);
+constexpr int kMaxConsecutiveWriteErrors = 50;
+constexpr int kWritePollTimeoutMs = 20;
 
+/**
+ * Maps an onboard output to its UCM device name.
+ *
+ * @param out Onboard output.
+ * @return UCM device name or nullptr.
+ */
 const char *device_name_for(audio_output out) {
     switch (out) {
         case audio_output::speaker: return "Speaker";
@@ -36,133 +49,310 @@ const char *device_name_for(audio_output out) {
 }
 
 /**
- * @brief Joins a directory and a file name with exactly one separating slash.
- */
-std::string join_path(const std::string &dir, const std::string &file) {
-    if (dir.empty()) return file;
-    if (dir.back() == '/') return dir + file;
-    return dir + "/" + file;
-}
-
-/**
- * @brief Applies CPU affinity to the current thread.
+ * Pins the calling thread to the given CPUs.
+ *
+ * @param cpus CPU indexes. An empty list keeps the default affinity.
  */
 void apply_audio_cpu_affinity(const std::vector<int> &cpus) {
-    if (cpus.empty()) {
-        Leticia::ui_print("apply_audio_cpu_affinity: no audio thread affinity specified, skipping thread pin");
-        return;
-    }
+    if (cpus.empty()) return;
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
-
     for (int cpu_id : cpus) {
-        if (cpu_id < 0 || cpu_id >= CPU_SETSIZE) {
-            Leticia::ui_print("apply_audio_cpu_affinity: CPU ID %d out of range [0-%d]", cpu_id, CPU_SETSIZE - 1);
-            return;
-        }
+        if (cpu_id < 0 || cpu_id >= CPU_SETSIZE) return;
         CPU_SET(cpu_id, &cpuset);
     }
-
-    if (sched_setaffinity(syscall(SYS_gettid), sizeof(cpuset), &cpuset) != 0) {
-        Leticia::ui_print("apply_audio_cpu_affinity: sched_setaffinity failed: %s", strerror(errno));
-        return;
-    }
-
-    std::string cpu_list;
-    for (size_t i = 0; i < cpus.size(); i++) {
-        if (i > 0) cpu_list += ", ";
-        cpu_list += std::to_string(cpus[i]);
-    }
-    Leticia::ui_print("apply_audio_cpu_affinity: audio thread pinned to CPU(s): %s", cpu_list.c_str());
+    if (sched_setaffinity(static_cast<pid_t>(syscall(SYS_gettid)), sizeof(cpuset), &cpuset) != 0)
+        Leticia::ui_print("audio_manager: sched_setaffinity failed: %s", strerror(errno));
 }
 
 /**
- * @brief Where playback should be routed, resolved once before decoding starts.
- */
-struct output_target {
-    ModernAlsa::size_type card = 0;
-    ModernAlsa::size_type device = 0;
-    size_t channels = kFallbackChannels;
-    bool via_usb = false;
-};
-
-/**
- * @brief Pairs an ALSA sample format with the FFmpeg format that produces an
- * identical (or trivially post-processable) in-memory sample layout, so the
- * two can never drift apart.
+ * Pairs an ALSA sample format with the FFmpeg format that feeds it.
  */
 struct pcm_format_mapping {
     ModernAlsa::sample_format alsa_format;
     AVSampleFormat av_format;
     size_t bytes_per_sample;
-
-    /// Significant bits actually carried in this format, for
-    /// device_config_t::audio_max_bit_depth filtering. Distinct from
-    /// bytes_per_sample * 8: S24_LE is 4 bytes wide but only 24 bits
-    /// significant.
     unsigned int valid_bits;
-
-    /// Arithmetic right-shift to apply to each converted S32 sample before
-    /// writing, so the significant bits land where this alsa_format expects
-    /// them. 0 for formats the resampler already produces in final form.
     unsigned int post_shift;
+    bool packed_24;
 };
 
 constexpr pcm_format_mapping kSupportedFormats[] = {
-    {ModernAlsa::sample_format::s32_le, AV_SAMPLE_FMT_S32, sizeof(int32_t), 32, 0},
-    {ModernAlsa::sample_format::s24_le, AV_SAMPLE_FMT_S32, sizeof(int32_t), 24, 8},
-    {ModernAlsa::sample_format::s16_le, AV_SAMPLE_FMT_S16, sizeof(int16_t), 16, 0},
+    {ModernAlsa::sample_format::s32_le, AV_SAMPLE_FMT_S32, sizeof(int32_t), 32, 0, false},
+    {ModernAlsa::sample_format::s24_le, AV_SAMPLE_FMT_S32, sizeof(int32_t), 24, 8, false},
+    {ModernAlsa::sample_format::s24_3le, AV_SAMPLE_FMT_S32, 3, 24, 0, true},
+    {ModernAlsa::sample_format::s16_le, AV_SAMPLE_FMT_S16, sizeof(int16_t), 16, 0, false},
 };
 
 /**
- * @brief Picks the most preferred ALSA/FFmpeg format pair the device
- * supports, not exceeding max_bit_depth.
+ * Orders the sample rates to try. The source rate comes first.
+ * Rates of the same family (44.1 kHz or 48 kHz) and rates above the source come next.
  *
- * @param supported Formats the device reported as supported, in any order.
- * @param max_bit_depth Skip any candidate whose valid_bits exceeds this.
- * @return Pointer into kSupportedFormats, or nullptr if none match.
+ * @param source_rate Rate of the decoded stream.
+ * @return Rates in order of preference.
  */
-const pcm_format_mapping *pick_output_format(const std::vector<ModernAlsa::sample_format> &supported,
-                                              unsigned int max_bit_depth) {
-    for (const auto &candidate : kSupportedFormats) {
-        if (max_bit_depth != 0 && candidate.valid_bits > max_bit_depth)
-            continue;
-        if (std::find(supported.begin(), supported.end(), candidate.alsa_format) != supported.end())
-            return &candidate;
-    }
-    return nullptr;
+std::vector<unsigned int> candidate_rates(unsigned int source_rate) {
+    std::vector<unsigned int> rates = {8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100,
+                                       48000, 88200, 96000, 176400, 192000};
+    if (std::find(rates.begin(), rates.end(), source_rate) == rates.end() && source_rate != 0)
+        rates.push_back(source_rate);
+
+    const bool source_family = source_rate % 11025 == 0;
+    std::stable_sort(rates.begin(), rates.end(), [&](unsigned int a, unsigned int b) {
+        auto key = [&](unsigned int r) {
+            const long distance = r > source_rate ? static_cast<long>(r - source_rate) : static_cast<long>(source_rate - r);
+            return std::make_tuple(r != source_rate, (r % 11025 == 0) != source_family, r < source_rate, distance);
+        };
+        return key(a) < key(b);
+    });
+    return rates;
 }
 
 /**
- * @brief Finds the first USB-attached playback PCM.
+ * Chooses the best sample format, channel count and rate that the device accepts.
  *
- * @return true if a USB playback device was found, false otherwise.
+ * @param params Capabilities of the device.
+ * @param supported Sample formats of the device.
+ * @param max_bit_depth Bit depth limit from the device config. 0 means no limit.
+ * @param source_rate Rate of the decoded stream.
+ * @param requested_channels Preferred channel count.
+ * @param format Receives the chosen format.
+ * @param rate Receives the chosen rate.
+ * @param channels Receives the chosen channel count.
+ * @return true if a combination works, false otherwise.
  */
-bool find_usb_playback_device(ModernAlsa::size_type &out_card, ModernAlsa::size_type &out_device) {
-    ModernAlsa::pcm_list list;
-    for (ModernAlsa::size_type i = 0; i < list.size(); i++) {
-        const auto &info = list[i];
-        if (info.is_capture) continue;
-        if (info.card == 0) continue;
+bool choose_output_config(const ModernAlsa::pcm_params &params, const std::vector<ModernAlsa::sample_format> &supported,
+                          unsigned int max_bit_depth, unsigned int source_rate, size_t requested_channels,
+                          const pcm_format_mapping **format, unsigned int *rate, size_t *channels) {
+    std::vector<size_t> channel_options{requested_channels};
+    for (size_t candidate : {size_t{2}, size_t{1}, size_t{4}, size_t{6}, size_t{8}})
+        if (std::find(channel_options.begin(), channel_options.end(), candidate) == channel_options.end())
+            channel_options.push_back(candidate);
 
-        out_card = info.card;
-        out_device = info.device;
-        return true;
-    }
-
-    if (list.size() == 0) {
-        Leticia::ui_print("audio_manager: pcm_list opened no PCM devices at all (not even onboard card 0)");
-    } else {
-        for (ModernAlsa::size_type i = 0; i < list.size(); i++) {
-            const auto &info = list[i];
-            Leticia::ui_print("audio_manager: pcm_list saw card %u device %u (%s, %s)",
-                              (unsigned)info.card, (unsigned)info.device,
-                              info.is_capture ? "capture" : "playback", info.name);
+    const std::vector<unsigned int> rates = candidate_rates(source_rate);
+    for (const auto &candidate : kSupportedFormats) {
+        if (max_bit_depth != 0 && candidate.valid_bits > max_bit_depth) continue;
+        if (std::find(supported.begin(), supported.end(), candidate.alsa_format) == supported.end()) continue;
+        for (size_t candidate_channels : channel_options) {
+            if (candidate_channels == 0 || !params.test_channels(candidate_channels)) continue;
+            for (unsigned int candidate_rate : rates) {
+                if (!params.test_config(candidate_channels, candidate_rate, candidate.alsa_format)) continue;
+                *format = &candidate;
+                *rate = candidate_rate;
+                *channels = candidate_channels;
+                return true;
+            }
         }
     }
-
     return false;
+}
+
+/**
+ * Fills the capability fields of a device description.
+ *
+ * @param params Capabilities of the device.
+ * @param supported Sample formats of the device.
+ * @param info Receives the capability strings.
+ */
+void describe_capabilities(const ModernAlsa::pcm_params &params, const std::vector<ModernAlsa::sample_format> &supported,
+                           audio_device_info_t &info) {
+    std::string formats;
+    for (ModernAlsa::sample_format format : supported) {
+        for (const auto &mapping : kSupportedFormats) {
+            if (mapping.alsa_format != format) continue;
+            if (!formats.empty()) formats += ", ";
+            formats += ModernAlsa::to_string(format);
+        }
+    }
+    info.supported_formats = formats.empty() ? "-" : formats;
+
+    auto min_rate = params.get_min_rate();
+    auto max_rate = params.get_max_rate();
+    if (!min_rate.failed() && !max_rate.failed()) {
+        char text[64];
+        snprintf(text, sizeof(text), "%lu-%lu Hz", static_cast<unsigned long>(min_rate.unwrap()),
+                 static_cast<unsigned long>(max_rate.unwrap()));
+        info.supported_rates = text;
+    }
+
+    auto max_channels = params.get_max_channels();
+    if (!max_channels.failed()) info.max_channels = static_cast<unsigned int>(max_channels.unwrap());
+}
+
+/**
+ * Collects the sample formats of a device.
+ *
+ * @param params Capabilities of the device.
+ * @return Supported sample formats.
+ */
+std::vector<ModernAlsa::sample_format> list_formats(const ModernAlsa::pcm_params &params) {
+    std::vector<ModernAlsa::sample_format> formats;
+    params.for_each_supported_format(
+        [](ModernAlsa::sample_format fmt, void *user) {
+            static_cast<std::vector<ModernAlsa::sample_format> *>(user)->push_back(fmt);
+        },
+        &formats);
+    return formats;
+}
+
+/**
+ * Retries a device open. A USB DAC refuses a new open for a short time after a close.
+ *
+ * @param fn Function that opens the device.
+ * @return Result of the last attempt.
+ */
+template <typename OpenFn>
+ModernAlsa::result open_device_with_retry(OpenFn &&fn) {
+    ModernAlsa::result r;
+    for (int attempt = 0; attempt < kDeviceOpenRetries; attempt++) {
+        r = fn();
+        if (!r.failed()) return r;
+        if (attempt + 1 < kDeviceOpenRetries) std::this_thread::sleep_for(kDeviceOpenRetryDelay);
+    }
+    return r;
+}
+
+/**
+ * Owns the FFmpeg objects of one playback session.
+ */
+struct av_session {
+    AVFormatContext *format = nullptr;
+    AVCodecContext *codec = nullptr;
+    AVPacket *packet = nullptr;
+    AVFrame *frame = nullptr;
+    int stream_index = -1;
+
+    av_session() = default;
+    av_session(const av_session &) = delete;
+    av_session &operator=(const av_session &) = delete;
+
+    ~av_session() {
+        av_frame_free(&frame);
+        av_packet_free(&packet);
+        avcodec_free_context(&codec);
+        avformat_close_input(&format);
+    }
+
+    /**
+     * Opens the file and its audio decoder.
+     *
+     * @param path File path.
+     * @return true on success.
+     */
+    bool open(const std::string &path) {
+        if (avformat_open_input(&format, path.c_str(), nullptr, nullptr) < 0) return false;
+        if (avformat_find_stream_info(format, nullptr) < 0) return false;
+
+        for (unsigned int i = 0; i < format->nb_streams; i++) {
+            if (format->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+                stream_index = static_cast<int>(i);
+                break;
+            }
+        }
+        if (stream_index < 0) return false;
+
+        AVStream *stream = format->streams[stream_index];
+        const AVCodec *decoder = avcodec_find_decoder(stream->codecpar->codec_id);
+        if (decoder == nullptr) return false;
+
+        codec = avcodec_alloc_context3(decoder);
+        if (codec == nullptr || avcodec_parameters_to_context(codec, stream->codecpar) < 0) return false;
+        if (avcodec_open2(codec, decoder, nullptr) < 0) return false;
+
+        packet = av_packet_alloc();
+        frame = av_frame_alloc();
+        return packet != nullptr && frame != nullptr;
+    }
+
+    AVStream *stream() const { return format->streams[stream_index]; }
+};
+
+enum class write_status {
+    ok,
+    stopped,
+    disconnected,
+};
+
+/**
+ * Checks whether the kernel reports the device as unplugged.
+ *
+ * @param writer Open PCM writer.
+ * @param error Error code of the failed call.
+ * @return true if the device is gone.
+ */
+bool device_is_gone(const ModernAlsa::interleaved_pcm_writer &writer, int error) {
+    if (error == ENODEV || error == ENOTTY || error == EBADFD) return true;
+    auto state = writer.get_state();
+    return !state.failed() && state.value == ModernAlsa::pcm_state::disconnected;
+}
+
+/**
+ * Writes all frames to the device. Waits on the device descriptor when the buffer is full.
+ *
+ * @param writer Open PCM writer.
+ * @param data Interleaved frames.
+ * @param frames Number of frames.
+ * @param frame_bytes Bytes per frame.
+ * @param stop Flag that cancels the write.
+ * @return Result of the write.
+ */
+write_status write_frames(ModernAlsa::interleaved_pcm_writer &writer, const uint8_t *data, ModernAlsa::size_type frames,
+                          size_t frame_bytes, const std::atomic<bool> &stop) {
+    ModernAlsa::size_type written = 0;
+    int errors = 0;
+
+    while (written < frames) {
+        if (stop.load(std::memory_order_acquire)) return write_status::stopped;
+        if (errors >= kMaxConsecutiveWriteErrors) return write_status::disconnected;
+
+        auto avail = writer.get_avail();
+        if (avail.failed()) {
+            if (device_is_gone(writer, avail.error)) return write_status::disconnected;
+            ModernAlsa::pcm_recover(writer, avail.error, true);
+            errors++;
+            continue;
+        }
+
+        const ModernAlsa::size_type room = avail.value;
+        if (room == 0) {
+            auto state = writer.get_state();
+            if (!state.failed() && state.value == ModernAlsa::pcm_state::disconnected) return write_status::disconnected;
+            if (!state.failed() && state.value == ModernAlsa::pcm_state::xrun) writer.prepare();
+
+            struct pollfd pfd = {writer.get_file_descriptor(), static_cast<short>(writer.get_poll_events()), 0};
+            poll(&pfd, 1, kWritePollTimeoutMs);
+            continue;
+        }
+
+        const ModernAlsa::size_type chunk = std::min(room, frames - written);
+        auto result = writer.write_unformatted(data + written * frame_bytes, chunk);
+        if (result.failed()) {
+            if (device_is_gone(writer, result.error)) return write_status::disconnected;
+            ModernAlsa::pcm_recover(writer, result.error, true);
+            errors++;
+            continue;
+        }
+        errors = 0;
+        written += result.value;
+    }
+    return write_status::ok;
+}
+
+/**
+ * Packs the top three bytes of each 32 bit sample into a 24 bit little endian stream.
+ *
+ * @param samples Input samples.
+ * @param count Number of samples.
+ * @param out Output bytes. Must hold 3 * count bytes.
+ */
+void pack_s24_3le(const int32_t *samples, size_t count, uint8_t *out) {
+    for (size_t i = 0; i < count; i++) {
+        const int32_t v = samples[i];
+        out[3 * i] = static_cast<uint8_t>(v >> 8);
+        out[3 * i + 1] = static_cast<uint8_t>(v >> 16);
+        out[3 * i + 2] = static_cast<uint8_t>(v >> 24);
+    }
 }
 
 } // namespace
@@ -178,12 +368,13 @@ audio_output audio_manager::detected_output() const {
 }
 
 bool audio_manager::init(const device_config_t &device_config, const user_config_t &user_config,
-                          const std::string &zip_path) {
+                         const std::string &zip_path, unsigned int cover_size_px) {
     card_ = device_config.alsa_card;
     cpu_affinity_ = device_config.audio_thread_affinity;
     onboard_reopen_workaround_ = device_config.onboard_audio_reopen_workaround;
     max_bit_depth_ = device_config.audio_max_bit_depth;
-    music_file_path_ = join_path(user_config.music_scan_path, "music.flac");
+    cover_size_px_ = cover_size_px;
+    scan_path_ = user_config.music_scan_path;
 
     std::string ucm_path;
     if (resolve_alsa_ucm_config_path(zip_path, ucm_path)) {
@@ -192,51 +383,77 @@ bool audio_manager::init(const device_config_t &device_config, const user_config
             Leticia::ui_print("audio_manager: UCM config parse error: %s (line %u)", err.description(), err.line);
         } else {
             cfg_loaded_ = true;
-            Leticia::ui_print("audio_manager: loaded UCM config from %s for card '%s' (%s)",
-                              ucm_path.c_str(), cfg_.card_name, cfg_.card_display_name);
+            Leticia::ui_print("audio_manager: loaded UCM config for card '%s'", cfg_.card_name);
         }
-    } else {
-        Leticia::ui_print("audio_manager: no UCM config found, onboard routing unavailable");
     }
 
     if (cfg_loaded_) {
         ModernAlsa::result r = mixer_.open(card_);
         if (r.failed()) {
-            Leticia::ui_print("audio_manager: could not open mixer for card %u: %s", card_, r.error_description());
+            Leticia::ui_print("audio_manager: cannot open mixer of card %u: %s", card_, r.error_description());
             cfg_loaded_ = false;
-        }
-
-        auto info = mixer_.get_card_info();
-        if (!info.failed() && strstr(info.value.name, cfg_.card_name) == nullptr) {
-            Leticia::ui_print("audio_manager: mixer reports '%s', config expects '%s', possible board mismatch",
-                              info.value.name, cfg_.card_name);
+        } else {
+            auto info = mixer_.get_card_info();
+            if (!info.failed() && strstr(info.value.name, cfg_.card_name) == nullptr)
+                Leticia::ui_print("audio_manager: mixer reports '%s', config expects '%s'", info.value.name, cfg_.card_name);
         }
     }
 
     if (input_monitor_.open()) {
-        input_monitor_.set_callback([this](const input_event_t &event) {
-            on_input_event(event);
-        });
+        input_monitor_.set_callback([this](const input_event_t &event) { on_input_event(event); });
     } else {
-        Leticia::ui_print("audio_manager: no input sources found, jack auto-detect unavailable (assuming speaker)");
+        Leticia::ui_print("audio_manager: no jack input source, assuming speaker");
     }
 
     detected_output_ = detected_output();
-    poll_timer_ = lv_timer_create(poll_timer_trampoline, kJackPollIntervalMs, this);
+    unsigned int usb_card = 0;
+    unsigned int usb_device = 0;
+    usb_present_ = alsa_scan::find_usb_playback(card_, usb_card, usb_device);
+    pcm_signature_ = alsa_scan::playback_signature();
+    refresh_idle_device_info();
 
-    Leticia::ui_print("audio_manager: initial output guess: %s",
-                      detected_output_ == audio_output::headphones ? "Headphones" : "Speaker");
-    Leticia::ui_print("audio_manager: music file set to %s", music_file_path_.c_str());
+    poll_timer_ = lv_timer_create(poll_timer_trampoline, kDevicePollIntervalMs, this);
 
+    scan_thread_ = std::thread(&audio_manager::scan_worker, this);
     return is_available();
 }
 
-void audio_manager::deinit() {
-    should_stop_.store(true, std::memory_order_release);
-    if (playback_thread_.joinable()) {
-        playback_thread_.join();
+void audio_manager::scan_worker() {
+    std::vector<std::string> files;
+    if (!scan_path_.empty()) audio_library::collect_audio_files(scan_path_, files);
+    std::sort(files.begin(), files.end());
+
+    scanned_.reserve(files.size());
+    for (const std::string &path : files) {
+        if (scan_abort_.load(std::memory_order_acquire)) break;
+        music_track_t track = audio_library::read_track(path, cover_size_px_);
+        if (!track.path.empty()) scanned_.push_back(std::move(track));
+        scan_progress_.fetch_add(1, std::memory_order_relaxed);
     }
-    playing_.store(false, std::memory_order_release);
+    Leticia::ui_print("audio_manager: indexed %zu music files under %s", scanned_.size(), scan_path_.c_str());
+    scan_done_.store(true, std::memory_order_release);
+}
+
+bool audio_manager::take_scan_result() {
+    if (!scan_done_.exchange(false, std::memory_order_acq_rel)) return false;
+
+    if (scan_thread_.joinable()) scan_thread_.join();
+    tracks_ = std::move(scanned_);
+    scanned_.clear();
+    current_track_index_ = 0;
+    if (!tracks_.empty()) music_file_path_ = tracks_.front().path;
+    return true;
+}
+
+const music_track_t *audio_manager::current_track() const {
+    return current_track_index_ < tracks_.size() ? &tracks_[current_track_index_] : nullptr;
+}
+
+void audio_manager::deinit() {
+    scan_abort_.store(true, std::memory_order_release);
+    if (scan_thread_.joinable()) scan_thread_.join();
+
+    stop_playback();
 
     if (poll_timer_ != nullptr) {
         lv_timer_delete(poll_timer_);
@@ -249,18 +466,14 @@ void audio_manager::deinit() {
 }
 
 bool audio_manager::apply_output(audio_output target) {
-    if (!cfg_loaded_ || !mixer_.is_open())
-        return false;
+    if (!cfg_loaded_ || !mixer_.is_open()) return false;
 
     const char *new_name = device_name_for(target);
-    if (new_name == nullptr)
-        return false;
+    if (new_name == nullptr) return false;
 
-    const char *prev_name = device_name_for(mixer_applied_output_);
-
-    ucm::result r = ucm::apply(mixer_, cfg_, "HiFi", new_name, prev_name);
+    ucm::result r = ucm::apply(mixer_, cfg_, "HiFi", new_name, device_name_for(mixer_applied_output_));
     if (r.failed()) {
-        Leticia::ui_print("audio_manager: ucm::apply(HiFi, %s) failed: %s", new_name, r.error_description());
+        Leticia::ui_print("audio_manager: ucm apply %s failed: %s", new_name, r.error_description());
         return false;
     }
 
@@ -269,371 +482,518 @@ bool audio_manager::apply_output(audio_output target) {
     return true;
 }
 
+void audio_manager::mute_output() {
+    if (!cfg_loaded_ || !mixer_.is_open()) return;
+
+    const char *applied_name = device_name_for(mixer_applied_output_);
+    if (applied_name == nullptr) return;
+
+    ucm::result r = ucm::mute(mixer_, cfg_, "HiFi", applied_name);
+    if (r.failed()) Leticia::ui_print("audio_manager: ucm mute %s failed: %s", applied_name, r.error_description());
+    mixer_applied_output_ = audio_output::unknown;
+}
+
 void audio_manager::on_input_event(const input_event_t &event) {
-    if (event.type != input_event_type::headphone_insert && event.type != input_event_type::headphone_remove)
-        return;
+    if (event.type != input_event_type::headphone_insert && event.type != input_event_type::headphone_remove) return;
 
-    audio_output new_output = detected_output();
-    detected_output_ = new_output;
+    detected_output_ = detected_output();
 
-    if (playing_.load(std::memory_order_acquire)) {
-        apply_output(new_output);
+    const bool onboard_session = playing_.load(std::memory_order_acquire) && !via_usb_active_.load(std::memory_order_acquire);
+    if (onboard_session) {
+        if (event.type == input_event_type::headphone_remove)
+            pause_for_route_loss();
+        else
+            restart_playback();
     }
+    refresh_idle_device_info();
+}
+
+void audio_manager::on_usb_changed(bool present) {
+    const bool playing = playing_.load(std::memory_order_acquire);
+    const bool via_usb = via_usb_active_.load(std::memory_order_acquire);
+
+    if (present && playing && !via_usb) {
+        Leticia::ui_print("audio_manager: USB DAC connected, switching to it");
+        restart_playback();
+    } else if (!present && playing && via_usb) {
+        Leticia::ui_print("audio_manager: USB DAC removed, pausing");
+        pause_for_route_loss();
+    }
+    refresh_idle_device_info();
+}
+
+void audio_manager::pause_for_route_loss() {
+    const uint64_t resume_at = position_seconds_.load(std::memory_order_acquire);
+    stop_playback();
+    position_seconds_.store(resume_at, std::memory_order_release);
+    resume_pending_.store(true, std::memory_order_release);
+    auto_paused_.store(true, std::memory_order_release);
+}
+
+void audio_manager::restart_playback() {
+    const bool was_paused = paused_.load(std::memory_order_acquire);
+    pause_for_route_loss();
+    if (!was_paused) start_playback();
 }
 
 bool audio_manager::start_playback() {
-    bool expected = false;
-    if (!playing_.compare_exchange_strong(expected, true)) {
-        return true; // Already playing
-    }
-
-    if (playback_thread_.joinable()) {
-        playback_thread_.join();
-    }
-
-    if (music_file_path_.empty()) {
-        Leticia::ui_print("audio_manager: no music file configured, cannot play");
-        playing_.store(false, std::memory_order_release);
+    if (tracks_.empty() || current_track_index_ >= tracks_.size()) {
+        Leticia::ui_print("audio_manager: no music to play");
         return false;
     }
 
+    bool expected = false;
+    if (!playing_.compare_exchange_strong(expected, true)) {
+        paused_.store(false, std::memory_order_release);
+        auto_paused_.store(false, std::memory_order_release);
+        return true;
+    }
+
+    if (playback_thread_.joinable()) playback_thread_.join();
+
+    const bool resume = resume_pending_.exchange(false, std::memory_order_acq_rel);
+    const uint64_t resume_at = position_seconds_.load(std::memory_order_acquire);
     should_stop_.store(false, std::memory_order_release);
+    paused_.store(false, std::memory_order_release);
+    auto_paused_.store(false, std::memory_order_release);
+    track_finished_.store(false, std::memory_order_release);
+    if (!resume) position_seconds_.store(0, std::memory_order_release);
+    seek_request_seconds_.store(resume && resume_at > 0 ? static_cast<int64_t>(resume_at) : -1, std::memory_order_release);
+    music_file_path_ = tracks_[current_track_index_].path;
     playback_thread_ = std::thread(&audio_manager::playback_thread_func, this);
     return true;
 }
 
 void audio_manager::stop_playback() {
     should_stop_.store(true, std::memory_order_release);
-    if (playback_thread_.joinable()) {
-        playback_thread_.join();
-    }
+    if (playback_thread_.joinable()) playback_thread_.join();
     playing_.store(false, std::memory_order_release);
+    paused_.store(false, std::memory_order_release);
+    auto_paused_.store(false, std::memory_order_release);
 }
 
 bool audio_manager::toggle_playback() {
     if (playing_.load(std::memory_order_acquire)) {
-        stop_playback();
-        return false;
+        const bool pause = !paused_.load(std::memory_order_acquire);
+        paused_.store(pause, std::memory_order_release);
+        return !pause;
     }
     return start_playback();
 }
 
-void audio_manager::playback_thread_func() {
-    apply_audio_cpu_affinity(cpu_affinity_);
-    Leticia::ui_print("audio_manager: playback thread started (%s)", music_file_path_.c_str());
+bool audio_manager::play_track(size_t index) {
+    if (index >= tracks_.size()) return false;
+    stop_playback();
+    current_track_index_ = index;
+    position_seconds_.store(0, std::memory_order_release);
+    resume_pending_.store(false, std::memory_order_release);
+    return start_playback();
+}
 
-    output_target target;
-    if (find_usb_playback_device(target.card, target.device)) {
-        target.channels = kFallbackChannels;
-        target.via_usb = true;
-        Leticia::ui_print("audio_manager: USB DAC detected on card %u, routing there",
-                          (unsigned)target.card);
-    } else if (cfg_loaded_ && mixer_.is_open()) {
-        audio_output onboard = detected_output();
-        if (!apply_output(onboard)) {
-            Leticia::ui_print("audio_manager: could not apply onboard routing, aborting playback");
-            playing_.store(false, std::memory_order_release);
-            return;
-        }
+void audio_manager::seek_to(uint64_t seconds) {
+    const music_track_t *track = current_track();
+    if (track == nullptr) return;
+    if (track->duration_seconds != 0 && seconds > track->duration_seconds) seconds = track->duration_seconds;
 
-        target.card = card_;
-        target.device = 0;
-        const ucm::verb *v = cfg_.find_verb("HiFi");
-        if (v != nullptr && v->playback_pcm_device != ucm::invalid_index()) {
-            target.device = v->playback_pcm_device;
-        } else {
-            Leticia::ui_print("audio_manager: no playback_pcm declared in UCM config, assuming device 0");
-        }
+    position_seconds_.store(seconds, std::memory_order_release);
+    if (!playing_.load(std::memory_order_acquire)) resume_pending_.store(true, std::memory_order_release);
+    seek_request_seconds_.store(static_cast<int64_t>(seconds), std::memory_order_release);
+}
 
-        target.channels = kFallbackChannels;
-        const ucm::device *dev = (v != nullptr) ? v->find_device(device_name_for(onboard)) : nullptr;
-        if (dev != nullptr && dev->channels != 0) {
-            target.channels = dev->channels;
-        }
+audio_device_info_t audio_manager::device_info() const {
+    std::lock_guard<std::mutex> lock(device_info_mutex_);
+    audio_device_info_t info = device_info_;
+    info.active = playing_.load(std::memory_order_acquire);
+    return info;
+}
+
+void audio_manager::refresh_idle_device_info() {
+    if (playing_.load(std::memory_order_acquire)) return;
+
+    audio_device_info_t info;
+    unsigned int card = card_;
+    unsigned int device = 0;
+    unsigned int usb_card = 0;
+    unsigned int usb_device = 0;
+
+    if (alsa_scan::find_usb_playback(card_, usb_card, usb_device)) {
+        card = usb_card;
+        device = usb_device;
+        info.output = "USB DAC";
+        info.name = alsa_scan::card_label(usb_card);
     } else {
-        Leticia::ui_print("audio_manager: no USB DAC and no UCM config, cannot play");
-        playing_.store(false, std::memory_order_release);
-        return;
-    }
-
-    AVFormatContext *fmt_ctx = nullptr;
-    if (avformat_open_input(&fmt_ctx, music_file_path_.c_str(), nullptr, nullptr) < 0) {
-        Leticia::ui_print("audio_manager: cannot open %s", music_file_path_.c_str());
-        playing_.store(false, std::memory_order_release);
-        return;
-    }
-
-    if (avformat_find_stream_info(fmt_ctx, nullptr) < 0) {
-        Leticia::ui_print("audio_manager: cannot find stream info for %s", music_file_path_.c_str());
-        avformat_close_input(&fmt_ctx);
-        playing_.store(false, std::memory_order_release);
-        return;
-    }
-
-    int audio_idx = -1;
-    for (unsigned i = 0; i < fmt_ctx->nb_streams; i++) {
-        if (fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-            audio_idx = (int)i;
-            break;
+        info.output = detected_output() == audio_output::headphones ? "Headphones" : "Speaker";
+        info.name = "Onboard audio";
+        if (mixer_.is_open()) {
+            auto card_info = mixer_.get_card_info();
+            if (!card_info.failed()) info.name = card_info.value.name;
         }
+        const ucm::verb *verb = cfg_loaded_ ? cfg_.find_verb("HiFi") : nullptr;
+        if (verb != nullptr && verb->playback_pcm_device != ucm::invalid_index()) device = verb->playback_pcm_device;
     }
-
-    if (audio_idx < 0) {
-        Leticia::ui_print("audio_manager: no audio stream in %s", music_file_path_.c_str());
-        avformat_close_input(&fmt_ctx);
-        playing_.store(false, std::memory_order_release);
-        return;
-    }
-
-    AVStream *stream = fmt_ctx->streams[audio_idx];
-    const AVCodec *codec = avcodec_find_decoder(stream->codecpar->codec_id);
-    if (codec == nullptr) {
-        Leticia::ui_print("audio_manager: no decoder for codec id %d", (int)stream->codecpar->codec_id);
-        avformat_close_input(&fmt_ctx);
-        playing_.store(false, std::memory_order_release);
-        return;
-    }
-
-    AVCodecContext *codec_ctx = avcodec_alloc_context3(codec);
-    avcodec_parameters_to_context(codec_ctx, stream->codecpar);
-    if (avcodec_open2(codec_ctx, codec, nullptr) < 0) {
-        Leticia::ui_print("audio_manager: cannot open codec for %s", music_file_path_.c_str());
-        avcodec_free_context(&codec_ctx);
-        avformat_close_input(&fmt_ctx);
-        playing_.store(false, std::memory_order_release);
-        return;
-    }
-
-    int out_rate = codec_ctx->sample_rate ? codec_ctx->sample_rate : 44100;
-    size_t out_channels = target.channels;
+    info.card = card;
+    info.device = device;
 
     ModernAlsa::pcm_params params;
-    if (params.open(target.card, target.device, false).failed()) {
-        Leticia::ui_print("audio_manager: cannot open pcm params for hw:%u,%u",
-                          (unsigned)target.card, (unsigned)target.device);
-        avcodec_free_context(&codec_ctx);
-        avformat_close_input(&fmt_ctx);
-        playing_.store(false, std::memory_order_release);
-        return;
-    }
+    if (!params.open(card, device, false).failed()) describe_capabilities(params, list_formats(params), info);
 
-    std::vector<ModernAlsa::sample_format> supported_fmts;
-    params.for_each_supported_format(
-        [](ModernAlsa::sample_format fmt, void *ud) {
-            static_cast<std::vector<ModernAlsa::sample_format> *>(ud)->push_back(fmt);
-        },
-        &supported_fmts
-    );
-
-    const pcm_format_mapping *fmt_map = pick_output_format(supported_fmts, max_bit_depth_);
-    if (fmt_map == nullptr) {
-        Leticia::ui_print("audio_manager: device has no S32/S24/S16 playback format we can output bit-perfect"
-                          "%s", max_bit_depth_ != 0 ? " within the configured audio_max_bit_depth" : "");
-        params.close();
-        avcodec_free_context(&codec_ctx);
-        avformat_close_input(&fmt_ctx);
-        playing_.store(false, std::memory_order_release);
-        return;
-    }
-
-    if (!params.test_channels(out_channels)) {
-        Leticia::ui_print("audio_manager: device does not support %zu channels", out_channels);
-        params.close();
-        avcodec_free_context(&codec_ctx);
-        avformat_close_input(&fmt_ctx);
-        playing_.store(false, std::memory_order_release);
-        return;
-    }
-
-    if (!params.test_rate((unsigned)out_rate)) {
-        Leticia::ui_print("audio_manager: device does not support rate %d", out_rate);
-        params.close();
-        avcodec_free_context(&codec_ctx);
-        avformat_close_input(&fmt_ctx);
-        playing_.store(false, std::memory_order_release);
-        return;
-    }
-
-    ModernAlsa::size_type period_size = 1024;
-    ModernAlsa::size_type period_count = 4;
-
-    auto min_period = params.get_min_period_size();
-    auto max_period = params.get_max_period_size();
-    if (!min_period.failed() && !max_period.failed()) {
-        ModernAlsa::size_type lo = min_period.unwrap();
-        ModernAlsa::size_type hi = max_period.unwrap();
-
-        if (period_size < lo) period_size = lo;
-        if (period_size > hi) period_size = hi;
-
-        // Round down to a power of two within range (most drivers prefer this)
-        ModernAlsa::size_type p = 1;
-        while (p * 2 <= period_size) p *= 2;
-        if (p >= lo) period_size = p;
-    }
-
-    params.close();
-
-    resampler rs;
-    AVChannelLayout in_layout;
-    if (codec_ctx->ch_layout.nb_channels > 0) {
-        av_channel_layout_copy(&in_layout, &codec_ctx->ch_layout);
-    } else {
-        av_channel_layout_default(&in_layout, 1);
-    }
-
-    AVChannelLayout out_layout;
-    av_channel_layout_default(&out_layout, (int)out_channels);
-
-    if (!rs.init(codec_ctx->sample_rate, in_layout, codec_ctx->sample_fmt, out_rate, out_layout, fmt_map->av_format)) {
-        Leticia::ui_print("audio_manager: resampler init failed");
-        avcodec_free_context(&codec_ctx);
-        avformat_close_input(&fmt_ctx);
-        playing_.store(false, std::memory_order_release);
-        return;
-    }
-
-    ModernAlsa::interleaved_pcm_writer writer;
-    if (writer.open(target.card, target.device, false).failed()) {
-        Leticia::ui_print("audio_manager: cannot open pcm device hw:%u,%u",
-                          (unsigned)target.card, (unsigned)target.device);
-        avcodec_free_context(&codec_ctx);
-        avformat_close_input(&fmt_ctx);
-        playing_.store(false, std::memory_order_release);
-        return;
-    }
-
-    if (!target.via_usb && onboard_reopen_workaround_) {
-        writer.set_reopen_before_reconfigure(true);
-    }
-
-    ModernAlsa::pcm_config config;
-    config.channels = out_channels;
-    config.rate = (unsigned)out_rate;
-    config.format = fmt_map->alsa_format;
-    config.period_size = period_size;
-    config.period_count = period_count;
-
-    if (writer.setup(config).failed() || writer.prepare().failed()) {
-        Leticia::ui_print("audio_manager: pcm configuration failed for hw:%u,%u",
-                          (unsigned)target.card, (unsigned)target.device);
-        writer.close();
-        avcodec_free_context(&codec_ctx);
-        avformat_close_input(&fmt_ctx);
-        playing_.store(false, std::memory_order_release);
-        return;
-    }
-
-    Leticia::ui_print("audio_manager: playing %s on hw:%u,%u (%s, %d Hz, %zu ch, %s)",
-                      music_file_path_.c_str(), (unsigned)target.card, (unsigned)target.device,
-                      target.via_usb ? "USB" : "onboard", out_rate, out_channels,
-                      ModernAlsa::to_string(fmt_map->alsa_format));
-
-    AVPacket *pkt = av_packet_alloc();
-    AVFrame *frame = av_frame_alloc();
-    const size_t frame_bytes = out_channels * fmt_map->bytes_per_sample;
-    std::vector<uint8_t> pcm_buf;
-    bool device_disconnected = false;
-
-    while (!should_stop_.load(std::memory_order_acquire)) {
-        if (av_read_frame(fmt_ctx, pkt) < 0) break;
-
-        if (pkt->stream_index != audio_idx) {
-            av_packet_unref(pkt);
-            continue;
-        }
-
-        if (avcodec_send_packet(codec_ctx, pkt) < 0) {
-            av_packet_unref(pkt);
-            continue;
-        }
-        av_packet_unref(pkt);
-
-        while (avcodec_receive_frame(codec_ctx, frame) == 0) {
-            if (should_stop_.load(std::memory_order_acquire)) {
-                av_frame_unref(frame);
-                break;
-            }
-
-            int max_out = rs.get_delay(out_rate) + frame->nb_samples + 64;
-            pcm_buf.resize((size_t)max_out * frame_bytes);
-
-            uint8_t *out_ptr = pcm_buf.data();
-            int converted = rs.convert((const uint8_t **)frame->data, frame->nb_samples, &out_ptr, max_out);
-            av_frame_unref(frame);
-            if (converted <= 0) continue;
-
-            if (fmt_map->post_shift != 0) {
-                auto *samples = reinterpret_cast<int32_t *>(pcm_buf.data());
-                size_t sample_count = (size_t)converted * out_channels;
-                for (size_t i = 0; i < sample_count; i++) {
-                    samples[i] >>= fmt_map->post_shift;
-                }
-            }
-
-            ModernAlsa::size_type written = 0;
-            while (written < (ModernAlsa::size_type)converted && !should_stop_.load(std::memory_order_acquire)) {
-                auto avail_res = writer.get_avail();
-                if (avail_res.failed()) {
-                    ModernAlsa::pcm_recover(writer, avail_res.error);
-                    if (writer.get_state().unwrap() == ModernAlsa::pcm_state::disconnected) {
-                        device_disconnected = true;
-                        break;
-                    }
-                    continue;
-                }
-
-                ModernAlsa::size_type avail = avail_res.unwrap();
-                if (avail == 0) {
-                    auto state = writer.get_state().unwrap();
-                    if (state == ModernAlsa::pcm_state::disconnected) {
-                        device_disconnected = true;
-                        break;
-                    } else if (state == ModernAlsa::pcm_state::xrun) {
-                        writer.prepare();
-                    }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                    continue;
-                }
-
-                ModernAlsa::size_type to_write = std::min(avail, (ModernAlsa::size_type)(converted - written));
-                auto write_res = writer.write_unformatted(pcm_buf.data() + written * frame_bytes, to_write);
-                if (write_res.failed()) {
-                    ModernAlsa::pcm_recover(writer, write_res.error);
-                    if (writer.get_state().unwrap() == ModernAlsa::pcm_state::disconnected) {
-                        device_disconnected = true;
-                        break;
-                    }
-                } else {
-                    written += write_res.unwrap();
-                }
-            }
-
-            if (device_disconnected) break;
-        }
-
-        if (device_disconnected) break;
-    }
-
-    writer.drain();
-    writer.close();
-    av_frame_free(&frame);
-    av_packet_free(&pkt);
-    avcodec_free_context(&codec_ctx);
-    avformat_close_input(&fmt_ctx);
-
-    if (device_disconnected) {
-        Leticia::ui_print("audio_manager: playback device was disconnected");
-    } else {
-        Leticia::ui_print("audio_manager: playback finished (%s)", music_file_path_.c_str());
-    }
-
-    playing_.store(false, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(device_info_mutex_);
+    device_info_ = info;
 }
 
 void audio_manager::poll_timer_trampoline(lv_timer_t *timer) {
     auto *self = static_cast<audio_manager *>(lv_timer_get_user_data(timer));
     self->input_monitor_.poll();
+
+    const uint64_t signature = alsa_scan::playback_signature();
+    if (signature == self->pcm_signature_) return;
+    self->pcm_signature_ = signature;
+
+    unsigned int usb_card = 0;
+    unsigned int usb_device = 0;
+    const bool present = alsa_scan::find_usb_playback(self->card_, usb_card, usb_device);
+    if (present != self->usb_present_) {
+        self->usb_present_ = present;
+        self->on_usb_changed(present);
+    } else {
+        self->refresh_idle_device_info();
+    }
+}
+
+void audio_manager::playback_thread_func() {
+    apply_audio_cpu_affinity(cpu_affinity_);
+
+    auto finish = [this](const char *reason) {
+        if (reason != nullptr) Leticia::ui_print("audio_manager: playback aborted: %s", reason);
+        playing_.store(false, std::memory_order_release);
+        paused_.store(false, std::memory_order_release);
+    };
+
+    output_target target;
+    audio_output onboard_output = audio_output::unknown;
+    bool route_onboard = false;
+
+    unsigned int usb_card = 0;
+    unsigned int usb_device = 0;
+    if (alsa_scan::find_usb_playback(card_, usb_card, usb_device)) {
+        target.card = usb_card;
+        target.device = usb_device;
+        target.via_usb = true;
+    } else if (cfg_loaded_ && mixer_.is_open()) {
+        onboard_output = detected_output();
+        route_onboard = true;
+        target.card = card_;
+        target.device = 0;
+        const ucm::verb *verb = cfg_.find_verb("HiFi");
+        if (verb != nullptr && verb->playback_pcm_device != ucm::invalid_index()) target.device = verb->playback_pcm_device;
+        const ucm::device *dev = verb != nullptr ? verb->find_device(device_name_for(onboard_output)) : nullptr;
+        if (dev != nullptr && dev->channels != 0) target.channels = dev->channels;
+    } else {
+        finish("no USB DAC and no UCM config");
+        return;
+    }
+    via_usb_active_.store(target.via_usb, std::memory_order_release);
+
+    av_session av;
+    if (!av.open(music_file_path_)) {
+        finish("cannot open the file");
+        return;
+    }
+    AVStream *stream = av.stream();
+
+    // The verb-level controls (e.g. "ADDA_DL_CH1 DL2_CH1") are what connect the PCM front-end to the
+    // codec back-end. On a DPCM card the PCM refuses to prepare, with EINVAL, while no back-end is
+    // connected, so they have to be on before the device is probed and opened. Only the verb is applied
+    // here; the speaker/headphone controls still follow after the prefill below, as before.
+    if (route_onboard) {
+        const ucm::result routes = ucm::apply(mixer_, cfg_, "HiFi", nullptr);
+        if (routes.failed()) {
+            Leticia::ui_print("audio_manager: ucm verb routes failed: %s", routes.error_description());
+            finish("cannot apply the onboard routes");
+            return;
+        }
+    }
+
+    ModernAlsa::pcm_params params;
+    if (open_device_with_retry([&] { return params.open(target.card, target.device, false); }).failed()) {
+        finish("cannot probe the device");
+        return;
+    }
+
+    const std::vector<ModernAlsa::sample_format> supported = list_formats(params);
+    const bool can_pause = params.supports_pause();
+    unsigned int out_rate = av.codec->sample_rate > 0 ? static_cast<unsigned int>(av.codec->sample_rate) : 44100;
+    size_t out_channels = target.channels;
+    const pcm_format_mapping *fmt_map = nullptr;
+    if (!choose_output_config(params, supported, max_bit_depth_, out_rate, out_channels, &fmt_map, &out_rate, &out_channels)) {
+        finish("no supported format, rate and channel combination");
+        return;
+    }
+
+    audio_device_info_t info;
+    describe_capabilities(params, supported, info);
+
+    ModernAlsa::size_type period_size = 1024;
+    const ModernAlsa::size_type period_count = 4;
+    auto min_period = params.get_min_period_size();
+    auto max_period = params.get_max_period_size();
+    if (!min_period.failed() && !max_period.failed()) {
+        const ModernAlsa::size_type lo = min_period.value;
+        const ModernAlsa::size_type hi = max_period.value;
+        period_size = std::clamp(period_size, lo, hi);
+        ModernAlsa::size_type p = 1;
+        while (p * 2 <= period_size) p *= 2;
+        if (p >= lo) period_size = p;
+    }
+    params.close();
+
+    AVChannelLayout in_layout;
+    if (av.codec->ch_layout.nb_channels > 0)
+        av_channel_layout_copy(&in_layout, &av.codec->ch_layout);
+    else
+        av_channel_layout_default(&in_layout, 1);
+    AVChannelLayout out_layout;
+    av_channel_layout_default(&out_layout, static_cast<int>(out_channels));
+
+    resampler rs;
+    const bool resampler_ok = rs.init(av.codec->sample_rate, in_layout, av.codec->sample_fmt,
+                                      static_cast<int>(out_rate), out_layout, fmt_map->av_format);
+    av_channel_layout_uninit(&in_layout);
+    av_channel_layout_uninit(&out_layout);
+    if (!resampler_ok) {
+        finish("resampler init failed");
+        return;
+    }
+
+    ModernAlsa::interleaved_pcm_writer writer;
+    const auto open_writer = [&] {
+        const auto opened = open_device_with_retry([&] { return writer.open(target.card, target.device, false); });
+        if (!opened.failed() && !target.via_usb && onboard_reopen_workaround_) writer.set_reopen_before_reconfigure(true);
+        return opened;
+    };
+    if (open_writer().failed()) {
+        finish("cannot open the device");
+        return;
+    }
+
+    ModernAlsa::pcm_config config;
+    config.channels = out_channels;
+    config.rate = out_rate;
+    config.format = fmt_map->alsa_format;
+
+    // The probe above only vetted channels, rate and format. setup() additionally pins the period
+    // size and count, and the driver's own hw_params callback may still refuse them (buffer size
+    // limits, DMA allocation). So rather than giving up on the first refusal, walk a short list of
+    // geometries, reopening the PCM between attempts so each one starts from a clean state. Every
+    // failure is logged with its errno, because "device configuration failed" alone says nothing.
+    struct geometry {
+        ModernAlsa::size_type size;
+        ModernAlsa::size_type count;
+    };
+    const geometry geometries[] = {
+        {period_size, period_count},
+        {period_size, 2},
+        {period_size * 2, 2},
+        {period_size / 2, 4},
+        {period_size * 4, 2},
+    };
+    const unsigned int log_card = static_cast<unsigned int>(target.card);
+    const unsigned int log_device = static_cast<unsigned int>(target.device);
+    Leticia::ui_print("audio_manager: configuring hw:%u,%u as %s, %u Hz, %u ch", log_card, log_device,
+                      ModernAlsa::to_string(fmt_map->alsa_format), out_rate, static_cast<unsigned int>(out_channels));
+
+    bool configured = false;
+    bool reopen_failed = false;
+    for (size_t attempt = 0; attempt < std::size(geometries) && !configured; ++attempt) {
+        const geometry &g = geometries[attempt];
+        if (g.size == 0) continue;
+        if (attempt > 0) {
+            writer.close();
+            if (open_writer().failed()) {
+                reopen_failed = true;
+                Leticia::ui_print("audio_manager: hw:%u,%u could not be reopened for another attempt", log_card, log_device);
+                break;
+            }
+        }
+        config.period_size = g.size;
+        config.period_count = g.count;
+
+        const auto setup_result = writer.setup(config);
+        if (setup_result.failed()) {
+            Leticia::ui_print("audio_manager: hw:%u,%u setup refused %u x %u frames: %s (errno %d)", log_card, log_device,
+                              static_cast<unsigned int>(g.count), static_cast<unsigned int>(g.size),
+                              setup_result.error_description(), setup_result.error);
+            continue;
+        }
+        const auto prepare_result = writer.prepare();
+        if (prepare_result.failed()) {
+            Leticia::ui_print("audio_manager: hw:%u,%u prepare failed after %u x %u frames: %s (errno %d)", log_card,
+                              log_device, static_cast<unsigned int>(g.count), static_cast<unsigned int>(g.size),
+                              prepare_result.error_description(), prepare_result.error);
+            // Unlike a refused setup(), this does not depend on the buffer geometry, so more attempts would
+            // only repeat the same failure.
+            break;
+        }
+        configured = true;
+        if (attempt > 0) {
+            Leticia::ui_print("audio_manager: hw:%u,%u accepted %u x %u frames after %u refused attempt(s)", log_card,
+                              log_device, static_cast<unsigned int>(g.count), static_cast<unsigned int>(g.size),
+                              static_cast<unsigned int>(attempt));
+        }
+    }
+    if (!configured) {
+        writer.close();
+        finish(reopen_failed ? "device configuration failed (reopen)" : "device configuration failed");
+        return;
+    }
+    period_size = config.period_size;
+
+    const size_t frame_bytes = out_channels * fmt_map->bytes_per_sample;
+    const size_t convert_bytes = out_channels * (fmt_map->av_format == AV_SAMPLE_FMT_S16 ? sizeof(int16_t) : sizeof(int32_t));
+
+    info.card = static_cast<unsigned int>(target.card);
+    info.device = static_cast<unsigned int>(target.device);
+    info.sample_rate = out_rate;
+    info.channels = out_channels;
+    info.format = ModernAlsa::to_string(fmt_map->alsa_format);
+    info.output = target.via_usb ? "USB DAC" : (onboard_output == audio_output::headphones ? "Headphones" : "Speaker");
+    info.name = target.via_usb ? alsa_scan::card_label(static_cast<unsigned int>(target.card)) : cfg_.card_display_name;
+    {
+        std::lock_guard<std::mutex> lock(device_info_mutex_);
+        device_info_ = info;
+    }
+
+    {
+        std::vector<uint8_t> silence(period_size * frame_bytes, 0);
+        ModernAlsa::size_type offset = 0;
+        while (offset < period_size) {
+            auto w = writer.write_unformatted(silence.data() + offset * frame_bytes, period_size - offset);
+            if (w.failed()) break;
+            offset += w.value;
+        }
+    }
+
+    if (route_onboard && !apply_output(onboard_output)) {
+        writer.close();
+        finish("cannot apply the onboard route");
+        return;
+    }
+
+    Leticia::ui_print("audio_manager: playing on hw:%u,%u (%s, %u Hz, %zu ch, %s)", static_cast<unsigned int>(target.card),
+                      static_cast<unsigned int>(target.device), target.via_usb ? "USB" : "onboard", out_rate, out_channels,
+                      ModernAlsa::to_string(fmt_map->alsa_format));
+
+    std::vector<uint8_t> convert_buffer;
+    std::vector<uint8_t> pack_buffer;
+    write_status status = write_status::ok;
+
+    auto deliver = [&](int frames) {
+        if (frames <= 0) return write_status::ok;
+        const uint8_t *data = convert_buffer.data();
+        if (fmt_map->post_shift != 0) {
+            auto *samples = reinterpret_cast<int32_t *>(convert_buffer.data());
+            const size_t count = static_cast<size_t>(frames) * out_channels;
+            for (size_t i = 0; i < count; i++) samples[i] >>= fmt_map->post_shift;
+        } else if (fmt_map->packed_24) {
+            const size_t count = static_cast<size_t>(frames) * out_channels;
+            pack_buffer.resize(count * 3);
+            pack_s24_3le(reinterpret_cast<const int32_t *>(convert_buffer.data()), count, pack_buffer.data());
+            data = pack_buffer.data();
+        }
+        return write_frames(writer, data, static_cast<ModernAlsa::size_type>(frames), frame_bytes, should_stop_);
+    };
+
+    enum class pause_mode { none, hardware, dropped };
+    pause_mode pause_state = pause_mode::none;
+    bool end_of_file = false;
+
+    while (!should_stop_.load(std::memory_order_acquire) && status == write_status::ok && !end_of_file) {
+        const int64_t seek_seconds = seek_request_seconds_.exchange(-1, std::memory_order_acq_rel);
+        if (seek_seconds >= 0) {
+            const int64_t timestamp = av_rescale_q(seek_seconds, AVRational{1, 1}, stream->time_base);
+            if (av_seek_frame(av.format, av.stream_index, timestamp, AVSEEK_FLAG_BACKWARD) >= 0) {
+                avcodec_flush_buffers(av.codec);
+                writer.drop();
+                writer.prepare();
+                if (pause_state == pause_mode::hardware) pause_state = pause_mode::dropped;
+                position_seconds_.store(static_cast<uint64_t>(seek_seconds), std::memory_order_release);
+            }
+        }
+
+        if (paused_.load(std::memory_order_acquire)) {
+            if (pause_state == pause_mode::none) {
+                if (can_pause && !writer.pause(true).failed()) {
+                    pause_state = pause_mode::hardware;
+                } else {
+                    writer.drop();
+                    writer.prepare();
+                    pause_state = pause_mode::dropped;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
+        }
+        if (pause_state != pause_mode::none) {
+            if (pause_state == pause_mode::hardware && writer.pause(false).failed()) writer.prepare();
+            if (pause_state == pause_mode::dropped) writer.prepare();
+            pause_state = pause_mode::none;
+        }
+
+        if (av_read_frame(av.format, av.packet) < 0) {
+            end_of_file = true;
+            avcodec_send_packet(av.codec, nullptr);
+        } else if (av.packet->stream_index != av.stream_index) {
+            av_packet_unref(av.packet);
+            continue;
+        } else {
+            const int sent = avcodec_send_packet(av.codec, av.packet);
+            av_packet_unref(av.packet);
+            if (sent < 0 && sent != AVERROR(EAGAIN)) continue;
+        }
+
+        while (status == write_status::ok && avcodec_receive_frame(av.codec, av.frame) == 0) {
+            if (av.frame->best_effort_timestamp != AV_NOPTS_VALUE) {
+                const int64_t position = av_rescale_q(av.frame->best_effort_timestamp, stream->time_base, AVRational{1, 1});
+                if (position >= 0) position_seconds_.store(static_cast<uint64_t>(position), std::memory_order_release);
+            }
+
+            const int max_out = rs.max_output_samples(av.frame->nb_samples);
+            convert_buffer.resize(static_cast<size_t>(max_out) * convert_bytes);
+            uint8_t *out_ptr = convert_buffer.data();
+            const int converted = rs.convert(const_cast<const uint8_t **>(av.frame->extended_data), av.frame->nb_samples, &out_ptr, max_out);
+            av_frame_unref(av.frame);
+            status = deliver(converted);
+        }
+    }
+
+    if (end_of_file && status == write_status::ok && !should_stop_.load(std::memory_order_acquire)) {
+        const int max_out = rs.max_output_samples(0);
+        convert_buffer.resize(static_cast<size_t>(max_out) * convert_bytes);
+        uint8_t *out_ptr = convert_buffer.data();
+        status = deliver(rs.flush(&out_ptr, max_out));
+    }
+
+    const bool completed = end_of_file && status == write_status::ok && !should_stop_.load(std::memory_order_acquire);
+    if (completed)
+        writer.drain();
+    else
+        writer.drop();
+
+    if (route_onboard) mute_output();
+    writer.close();
+
+    if (status == write_status::disconnected) {
+        Leticia::ui_print("audio_manager: playback device was disconnected");
+        resume_pending_.store(true, std::memory_order_release);
+        auto_paused_.store(true, std::memory_order_release);
+    } else if (completed) {
+        const music_track_t *track = current_track();
+        if (track != nullptr && track->duration_seconds != 0)
+            position_seconds_.store(track->duration_seconds, std::memory_order_release);
+        track_finished_.store(true, std::memory_order_release);
+    }
+
+    finish(nullptr);
 }
 
 } // namespace Leticia

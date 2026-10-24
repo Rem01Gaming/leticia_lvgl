@@ -98,6 +98,14 @@ namespace Leticia {
         void deinit();
 
         /**
+         * @brief Turns the backlight and the panel on without LVGL calls.
+         *
+         * Uses only system calls, so the safety watchdog thread can call it
+         * during a forced exit. Call it before the process leaves recovery.
+         */
+        void restore_display();
+
+        /**
          * @brief Services any pending wake transition.
          *
          * @return true if a wake was processed, false otherwise.
