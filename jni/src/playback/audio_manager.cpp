@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <iterator>
@@ -28,6 +29,10 @@ namespace Leticia {
 namespace {
 
 constexpr uint32_t kDevicePollIntervalMs = 250;
+constexpr uint32_t kInputPollIntervalMs = 40;
+constexpr int kVolumeStepPercent = 5;
+constexpr uint32_t kVolumeRepeatDelayMs = 400;
+constexpr uint32_t kVolumeRepeatIntervalMs = 80;
 constexpr int kDeviceOpenRetries = 8;
 constexpr auto kDeviceOpenRetryDelay = std::chrono::milliseconds(60);
 constexpr int kMaxConsecutiveWriteErrors = 50;
@@ -107,6 +112,45 @@ std::vector<unsigned int> candidate_rates(unsigned int source_rate) {
         return key(a) < key(b);
     });
     return rates;
+}
+
+/**
+ * Converts a volume percentage to a linear amplitude gain.
+ *
+ * The curve is quadratic because perceived loudness is closer to logarithmic than linear.
+ * 100 percent gives exactly 1.0, so full volume leaves the samples untouched.
+ *
+ * @param percent Volume in percent.
+ * @return Gain from 0.0 to 1.0.
+ */
+double volume_gain(int percent) {
+    const double normalized = static_cast<double>(std::clamp(percent, 0, 100)) / 100.0;
+    return normalized * normalized;
+}
+
+/**
+ * Scales interleaved samples in place and ramps the gain across the block.
+ *
+ * The ramp avoids audible clicks when the volume changes between two blocks.
+ *
+ * @tparam Sample Sample type, int16_t or int32_t.
+ * @param samples Interleaved samples.
+ * @param frames Number of frames in the block.
+ * @param channels Number of channels.
+ * @param from_gain Gain at the start of the block.
+ * @param to_gain Gain at the end of the block.
+ */
+template <typename Sample>
+void scale_samples(Sample *samples, size_t frames, size_t channels, double from_gain, double to_gain) {
+    const double step = frames != 0 ? (to_gain - from_gain) / static_cast<double>(frames) : 0.0;
+    double gain = from_gain;
+    for (size_t frame = 0; frame < frames; ++frame) {
+        gain += step;
+        for (size_t channel = 0; channel < channels; ++channel) {
+            Sample &sample = samples[frame * channels + channel];
+            sample = static_cast<Sample>(std::llrint(static_cast<double>(sample) * gain));
+        }
+    }
 }
 
 /**
@@ -412,7 +456,8 @@ bool audio_manager::init(const device_config_t &device_config, const user_config
     pcm_signature_ = alsa_scan::playback_signature();
     refresh_idle_device_info();
 
-    poll_timer_ = lv_timer_create(poll_timer_trampoline, kDevicePollIntervalMs, this);
+    last_device_check_ms_ = lv_tick_get();
+    poll_timer_ = lv_timer_create(poll_timer_trampoline, kInputPollIntervalMs, this);
 
     scan_thread_ = std::thread(&audio_manager::scan_worker, this);
     return is_available();
@@ -493,7 +538,60 @@ void audio_manager::mute_output() {
     mixer_applied_output_ = audio_output::unknown;
 }
 
+void audio_manager::set_volume(int percent) {
+    volume_percent_.store(std::clamp(percent, 0, 100), std::memory_order_release);
+    volume_changed_.store(true, std::memory_order_release);
+}
+
+void audio_manager::adjust_volume(int delta_percent) {
+    set_volume(volume() + delta_percent);
+}
+
+void audio_manager::on_volume_key(bool up, bool pressed) {
+    (up ? volume_up_held_ : volume_down_held_) = pressed;
+
+    if (pressed) {
+        volume_repeat_direction_ = up ? 1 : -1;
+        volume_next_repeat_ms_ = lv_tick_get() + kVolumeRepeatDelayMs;
+        adjust_volume(volume_repeat_direction_ * kVolumeStepPercent);
+        return;
+    }
+
+    /* Keep repeating for the other key if it is still held, otherwise stop. */
+    if (volume_up_held_)
+        volume_repeat_direction_ = 1;
+    else if (volume_down_held_)
+        volume_repeat_direction_ = -1;
+    else
+        volume_repeat_direction_ = 0;
+    volume_next_repeat_ms_ = lv_tick_get() + kVolumeRepeatDelayMs;
+}
+
+void audio_manager::service_volume_repeat(uint32_t now_ms) {
+    if (volume_repeat_direction_ == 0) return;
+    if (static_cast<int32_t>(now_ms - volume_next_repeat_ms_) < 0) return;
+
+    adjust_volume(volume_repeat_direction_ * kVolumeStepPercent);
+    volume_next_repeat_ms_ = now_ms + kVolumeRepeatIntervalMs;
+}
+
 void audio_manager::on_input_event(const input_event_t &event) {
+    switch (event.type) {
+    case input_event_type::volume_up_press:
+        on_volume_key(true, true);
+        return;
+    case input_event_type::volume_up_release:
+        on_volume_key(true, false);
+        return;
+    case input_event_type::volume_down_press:
+        on_volume_key(false, true);
+        return;
+    case input_event_type::volume_down_release:
+        on_volume_key(false, false);
+        return;
+    default:
+        break;
+    }
     if (event.type != input_event_type::headphone_insert && event.type != input_event_type::headphone_remove) return;
 
     detected_output_ = detected_output();
@@ -644,6 +742,12 @@ void audio_manager::refresh_idle_device_info() {
 void audio_manager::poll_timer_trampoline(lv_timer_t *timer) {
     auto *self = static_cast<audio_manager *>(lv_timer_get_user_data(timer));
     self->input_monitor_.poll();
+
+    /* Keys are read often so the volume reacts at once. The device scan stays on its slower period. */
+    const uint32_t now = lv_tick_get();
+    self->service_volume_repeat(now);
+    if (now - self->last_device_check_ms_ < kDevicePollIntervalMs) return;
+    self->last_device_check_ms_ = now;
 
     const uint64_t signature = alsa_scan::playback_signature();
     if (signature == self->pcm_signature_) return;
@@ -887,8 +991,23 @@ void audio_manager::playback_thread_func() {
     std::vector<uint8_t> pack_buffer;
     write_status status = write_status::ok;
 
+    const bool convert_is_16bit = fmt_map->av_format == AV_SAMPLE_FMT_S16;
+    double applied_gain = volume_gain(volume());
+
     auto deliver = [&](int frames) {
         if (frames <= 0) return write_status::ok;
+
+        const double target_gain = volume_gain(volume());
+        if (applied_gain != 1.0 || target_gain != 1.0) {
+            if (convert_is_16bit)
+                scale_samples(reinterpret_cast<int16_t *>(convert_buffer.data()), static_cast<size_t>(frames), out_channels,
+                              applied_gain, target_gain);
+            else
+                scale_samples(reinterpret_cast<int32_t *>(convert_buffer.data()), static_cast<size_t>(frames), out_channels,
+                              applied_gain, target_gain);
+        }
+        applied_gain = target_gain;
+
         const uint8_t *data = convert_buffer.data();
         if (fmt_map->post_shift != 0) {
             auto *samples = reinterpret_cast<int32_t *>(convert_buffer.data());

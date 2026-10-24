@@ -165,6 +165,34 @@ public:
      */
     bool toggle_playback();
 
+    /**
+     * Gets the playback volume.
+     *
+     * @return Volume in percent, 0 to 100.
+     */
+    int volume() const { return volume_percent_.load(std::memory_order_acquire); }
+
+    /**
+     * Sets the playback volume. The change is applied to the running session within one audio buffer.
+     *
+     * @param percent Volume in percent. Values outside 0 to 100 are clamped.
+     */
+    void set_volume(int percent);
+
+    /**
+     * Changes the playback volume by a relative amount.
+     *
+     * @param delta_percent Change in percent. Negative values lower the volume.
+     */
+    void adjust_volume(int delta_percent);
+
+    /**
+     * Checks if the volume was set since the last call. Used to show the volume indicator.
+     *
+     * @return true once after each change, even if the value hit a limit.
+     */
+    bool take_volume_changed() { return volume_changed_.exchange(false, std::memory_order_acq_rel); }
+
     const std::vector<music_track_t> &tracks() const { return tracks_; }
     size_t current_track_index() const { return current_track_index_; }
     const music_track_t *current_track() const;
@@ -213,6 +241,13 @@ private:
     std::atomic<int64_t> seek_request_seconds_{-1};
     std::atomic<bool> resume_pending_{false};
     std::atomic<bool> via_usb_active_{false};
+    std::atomic<int> volume_percent_{100};
+    std::atomic<bool> volume_changed_{false};
+    uint32_t last_device_check_ms_ = 0;
+    bool volume_up_held_ = false;
+    bool volume_down_held_ = false;
+    int volume_repeat_direction_ = 0;
+    uint32_t volume_next_repeat_ms_ = 0;
     bool usb_present_ = false;
     uint64_t pcm_signature_ = 0;
 
@@ -247,6 +282,21 @@ private:
      * Stops playback and keeps the position. The next play resumes on the current route.
      */
     void pause_for_route_loss();
+
+    /**
+     * Starts or stops the volume key auto-repeat and applies the first step on a press.
+     *
+     * @param up true for the volume up key, false for volume down.
+     * @param pressed true on press, false on release.
+     */
+    void on_volume_key(bool up, bool pressed);
+
+    /**
+     * Applies repeated volume steps while a volume key is held.
+     *
+     * @param now_ms Current LVGL tick in milliseconds.
+     */
+    void service_volume_repeat(uint32_t now_ms);
 
     /**
      * Reacts to a jack event.

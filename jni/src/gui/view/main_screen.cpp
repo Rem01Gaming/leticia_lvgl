@@ -4,6 +4,7 @@
 #include "gui/icons.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -30,6 +31,11 @@ constexpr uint32_t kMenuBorderRgb = 0x474747;
 constexpr uint32_t kTrackRgb = 0x555555;
 
 constexpr float kCoverDp = 38.0f;
+constexpr float kRowMoreDp = 15.0f;       /* Kebab icon size inside a track row. */
+constexpr float kRowPadRightDp = 12.0f;   /* Right padding of a track row. */
+constexpr float kHeaderMoreBoxDp = 40.0f; /* Touch target of the header kebab. */
+constexpr uint32_t kVolumeHideMs = 1500;
+constexpr uint32_t kVolumePollMs = 50;
 constexpr uint32_t kTickMs = 250;
 constexpr size_t kNoIndex = static_cast<size_t>(-1);
 constexpr lv_style_selector_t kPressed =
@@ -76,6 +82,10 @@ struct player_view {
     lv_obj_t *shuffle_menu = nullptr;
     lv_obj_t *alsa_modal = nullptr;
     lv_obj_t *alsa_values[9] = {};
+    lv_obj_t *volume_overlay = nullptr;
+    lv_obj_t *volume_bar = nullptr;
+    lv_obj_t *volume_label = nullptr;
+    uint32_t volume_hide_at_ms = 0;
 
     std::vector<lv_obj_t *> row_objects;
     std::vector<lv_obj_t *> row_icons;
@@ -685,7 +695,7 @@ void add_track_row(player_view &view, const Leticia::music_track_t &track, size_
     lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
     lv_obj_set_style_border_color(row, color_of(0x111111), LV_PART_MAIN);
     lv_obj_set_style_pad_left(row, dp{10}.px(), LV_PART_MAIN);
-    lv_obj_set_style_pad_right(row, dp{12}.px(), LV_PART_MAIN);
+    lv_obj_set_style_pad_right(row, dp{kRowPadRightDp}.px(), LV_PART_MAIN);
     lv_obj_set_style_pad_column(row, dp{10}.px(), LV_PART_MAIN);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -715,7 +725,7 @@ void add_track_row(player_view &view, const Leticia::music_track_t &track, size_
     lv_obj_set_width(artist, LV_PCT(100));
     lv_label_set_long_mode(artist, LV_LABEL_LONG_MODE_DOTS);
 
-    make_icon(row, "ellipsis_vertical", kMoreRgb, 15);
+    make_icon(row, "ellipsis_vertical", kMoreRgb, kRowMoreDp);
 
     view.row_objects.push_back(row);
     view.row_icons.push_back(icon);
@@ -753,6 +763,74 @@ void populate_rows(player_view &view) {
     }
     sync_track(view);
     sync_transport(view);
+}
+
+/**
+ * Creates the volume indicator on the top layer. It starts hidden.
+ *
+ * @param view Player state.
+ * @param status_height Height of the status bar in pixels.
+ */
+void create_volume_overlay(player_view &view, int32_t status_height) {
+    lv_obj_t *overlay = make_plain(lv_layer_top());
+    lv_obj_set_size(overlay, dp{196}.px(), dp{40}.px());
+    lv_obj_set_style_bg_color(overlay, color_of(kMenuRgb), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(overlay, color_of(kMenuBorderRgb), LV_PART_MAIN);
+    lv_obj_set_style_border_width(overlay, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(overlay, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_pad_left(overlay, dp{14}.px(), LV_PART_MAIN);
+    lv_obj_set_style_pad_right(overlay, dp{14}.px(), LV_PART_MAIN);
+    lv_obj_set_style_pad_column(overlay, dp{10}.px(), LV_PART_MAIN);
+    lv_obj_set_flex_flow(overlay, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(overlay, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_align(overlay, LV_ALIGN_TOP_MID, 0, status_height + dp{8}.px());
+
+    make_icon(overlay, "volume_high", kTextRgb, 16);
+
+    lv_obj_t *bar = lv_bar_create(overlay);
+    lv_obj_remove_style_all(bar);
+    lv_obj_set_height(bar, dp{4}.px());
+    lv_obj_set_flex_grow(bar, 1);
+    lv_bar_set_range(bar, 0, 100);
+    lv_obj_set_style_bg_color(bar, color_of(kTrackRgb), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(bar, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bar, color_of(kAccentRgb), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(bar, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+
+    lv_obj_t *label = make_label(overlay, "100%", 12, kTextRgb, weight::semibold);
+    lv_obj_set_width(label, dp{34}.px());
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+
+    lv_obj_set_hidden(overlay, true);
+    view.volume_overlay = overlay;
+    view.volume_bar = bar;
+    view.volume_label = label;
+}
+
+/**
+ * Shows the volume indicator after a volume change and hides it again after a short delay.
+ *
+ * @param timer Timer that carries the player state.
+ */
+void volume_timer_cb(lv_timer_t *timer) {
+    auto *view = static_cast<player_view *>(lv_timer_get_user_data(timer));
+
+    if (view->audio->take_volume_changed()) {
+        const int volume = view->audio->volume();
+        lv_bar_set_value(view->volume_bar, volume, LV_ANIM_OFF);
+        char text[8];
+        snprintf(text, sizeof(text), "%d%%", volume);
+        set_text(view->volume_label, text);
+        lv_obj_set_hidden(view->volume_overlay, false);
+        lv_obj_move_foreground(view->volume_overlay);
+        view->volume_hide_at_ms = lv_tick_get() + kVolumeHideMs;
+    } else if (!lv_obj_is_hidden(view->volume_overlay) &&
+               static_cast<int32_t>(lv_tick_get() - view->volume_hide_at_ms) >= 0) {
+        lv_obj_set_hidden(view->volume_overlay, true);
+    }
 }
 
 void player_timer_cb(lv_timer_t *timer) {
@@ -811,11 +889,15 @@ void build_main_screen(Leticia::audio_manager &audio, const Leticia::gui::status
     lv_obj_t *header = make_plain(root);
     lv_obj_set_size(header, LV_PCT(100), dp{56}.px());
     lv_obj_set_style_pad_left(header, dp{14}.px(), LV_PART_MAIN);
-    lv_obj_set_style_pad_right(header, dp{8}.px(), LV_PART_MAIN);
     lv_obj_t *app_title = make_label(header, "Leticia", 17, kTextRgb, weight::semibold);
     lv_obj_align(app_title, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_t *header_more = make_icon_button(header, "ellipsis_vertical", kTextRgb, 16, 40, nullptr);
-    lv_obj_align(header_more, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_t *header_more = make_icon_button(header, "ellipsis_vertical", kTextRgb, 16, kHeaderMoreBoxDp, nullptr);
+    /* Put the header kebab on the same vertical axis as the kebabs of the track rows.
+     * The row icon center is its right padding plus half its width from the right edge.
+     * The button center must land there, so the button edge is offset by the difference. */
+    const double row_icon_center = dp{kRowPadRightDp}.px() + dp{kRowMoreDp}.px() / 2.0;
+    const double button_half = dp{kHeaderMoreBoxDp}.px() / 2.0;
+    lv_obj_align(header_more, LV_ALIGN_RIGHT_MID, -static_cast<int32_t>(std::lround(row_icon_center - button_half)), 0);
     lv_obj_add_event_cb(header_more, header_more_cb, LV_EVENT_CLICKED, &view);
 
     view.rows = make_plain(root);
@@ -916,10 +998,12 @@ void build_main_screen(Leticia::audio_manager &audio, const Leticia::gui::status
 
     create_header_menu(view, status_bar.height_px());
     create_alsa_modal(view);
+    create_volume_overlay(view, status_bar.height_px());
 
     sync_track(view);
     sync_transport(view);
     lv_timer_create(player_timer_cb, kTickMs, &view);
+    lv_timer_create(volume_timer_cb, kVolumePollMs, &view);
 }
 
 } // namespace Leticia::screens
